@@ -79,6 +79,34 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("python3 scripts/e2e_protocol.py validate --help", protocol)
         self.assertNotIn("skills/e2e-testing/scripts/e2e_protocol.py", protocol)
 
+    def test_playwright_adapter_contract_and_orchestrator_boundary(self):
+        adapter = ROOT / "skills/e2e-web-playwright/SKILL.md"
+        adapter_text = adapter.read_text()
+        orchestrator_text = (ROOT / "skills/e2e-testing/SKILL.md").read_text()
+
+        self.assertLess(len(adapter_text.splitlines()), 500)
+        self.assertIn("name: e2e-web-playwright", adapter_text)
+        self.assertIn("description:", adapter_text)
+        self.assertEqual(set(frontmatter(adapter_text)), {"name", "description"})
+        self.assertIn("`plan`, `generate`, `verify`, or `repair`", adapter_text)
+        self.assertIn("default to `generate`", adapter_text)
+        self.assertIn("bootstrap one with the bundled utility", adapter_text)
+        self.assertIn("live inspection", adapter_text)
+        self.assertIn("source/spec evidence", adapter_text)
+        self.assertIn("unsupported-framework", adapter_text)
+        self.assertIn("generated-unverified", adapter_text)
+        self.assertIn("recorded test defect", adapter_text)
+        self.assertIn("test/support files only", adapter_text)
+        self.assertIn("Never modify application code", adapter_text)
+        self.assertIn("Never weaken expected outcomes", adapter_text)
+        self.assertIn("unconditional skips", adapter_text)
+        self.assertIn("hardcoded sleeps", adapter_text)
+        self.assertIn("product defects", adapter_text)
+        self.assert_relative_links_exist(ROOT / "skills/e2e-web-playwright")
+
+        for playwright_api in ("page.getByRole", "test.describe", "expect("):
+            self.assertNotIn(playwright_api, orchestrator_text)
+
 
 if __name__ == "__main__":
     unittest.main()
