@@ -159,6 +159,11 @@ class SkillContractTests(unittest.TestCase):
             "`target_reference`, and `target_tier`; never copy secrets",
             workflow_semantics,
         )
+        for handoff_field in (
+            "reproduction_steps", "expected_behavior", "actual_behavior", "artifact_refs",
+            "evidence_ids", "journey_ids", "capability", "resume",
+        ):
+            self.assertIn(f"`{handoff_field}`", workflow)
         self.assertIn("Choose exactly one mutually exclusive primary outcome.", failure_semantics)
         self.assertIn(
             "only a `test-defect` at `0.80` or higher may enter repair.",
@@ -202,6 +207,36 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("`unspecified`", safety)
         self.assertNotIn("| test |", safety)
         self.assertNotIn("| unknown |", safety)
+
+    def test_every_documented_transition_edge_exists_in_protocol(self):
+        protocol = (ROOT / "skills/e2e-testing/references/protocol.md").read_text()
+        table = protocol.split("| From | Event | To |", 1)[1].split("Never upgrade", 1)[0]
+        edges: set[tuple[str, str]] = set()
+        for line in table.splitlines():
+            if not line.startswith("|") or line.startswith("| ---"):
+                continue
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            source = re.fullmatch(r"`([^`]+)`", cells[0])
+            target = re.fullmatch(r"`([^`]+)`", cells[2])
+            self.assertIsNotNone(source, f"transition source must be one exact status: {cells[0]}")
+            self.assertIsNotNone(target, f"transition target must be one exact status: {cells[2]}")
+            assert source is not None and target is not None
+            edge = (source.group(1), target.group(1))
+            self.assertIn(edge[0], TRANSITIONS)
+            self.assertIn(edge[1], TRANSITIONS[edge[0]], f"illegal documented transition: {edge}")
+            edges.add(edge)
+        self.assertIn(("planned", "ready-for-adapter"), edges)
+        self.assertIn(("ready-for-adapter", "generated-unverified"), edges)
+
+    def test_documented_handoff_fields_match_evaluator_vocabulary(self):
+        workflow = (ROOT / "skills/e2e-testing/references/workflow.md").read_text()
+        table = workflow.split("| Field | Meaning |", 1)[1].split("The handoff must", 1)[0]
+        documented = set(re.findall(r"^\| `([^`]+)` \|", table, re.MULTILINE))
+        self.assertEqual(documented, {
+            "id", "capability", "requested_at", "manifest_revision", "journey_ids",
+            "reproduction_steps", "expected_behavior", "actual_behavior", "artifact_refs",
+            "evidence_ids", "resume", "result",
+        })
 
 
 if __name__ == "__main__":

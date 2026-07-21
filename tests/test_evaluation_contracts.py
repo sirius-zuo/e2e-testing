@@ -55,24 +55,35 @@ def _verification_evidence(test_id: str) -> dict:
     }
 
 
-def _product_defect_evidence() -> dict:
-    return {
-        "kind": "verification",
-        "command": "node --test tests/checkout.logic.test.js",
-        "exit_code": 1,
-        "duration_ms": 125,
-        "test_ids": ["test-checkout"],
-        "outcomes": [{"test_id": "test-checkout", "status": "failed"}],
-        "execution_environment": {
-            "browser_project": "chromium", "os_platform": "test-os", "runtime": "node 22",
-            "application_build_ref": "fixture", "target_reference": "local-fixture", "target_tier": "local",
+def _product_defect_evidence() -> list[dict]:
+    return [
+        {
+            "id": "evidence-product-run",
+            "kind": "verification",
+            "command": "node --test tests/checkout.logic.test.js",
+            "exit_code": 1,
+            "duration_ms": 125,
+            "test_ids": ["test-checkout"],
+            "outcomes": [{"test_id": "test-checkout", "status": "failed"}],
+            "execution_environment": {
+                "browser_project": "chromium", "os_platform": "test-os", "runtime": "node 22",
+                "application_build_ref": "fixture", "target_reference": "local-fixture", "target_tier": "local",
+            },
+            "artifacts": [{
+                "id": "artifact-checkout-log", "path": ".e2e/evidence/checkout.log",
+                "sha256": "b6d81b360a5672d80c27430f39153e2c920ca209157884b67866f83ec952ef75",
+            }],
         },
-        "classification": {
-            "primary": "product-defect", "confidence": 0.9,
-            "rationale": "The selected assertion matches the fixture specification.",
-            "evidence_ids": ["evidence-product-defect"],
+        {
+            "id": "evidence-product-defect",
+            "kind": "classification",
+            "classification": {
+                "primary": "product-defect", "confidence": 0.9,
+                "rationale": "The selected assertion matches the fixture specification.",
+                "evidence_ids": ["evidence-product-run"],
+            },
         },
-    }
+    ]
 
 
 def _product_defect_handoff() -> dict:
@@ -80,7 +91,11 @@ def _product_defect_handoff() -> dict:
         "id": "handoff-product-defect", "capability": "fix-product-defect",
         "journey_ids": ["journey-checkout"],
         "resume": {"command": "e2e-web-playwright verify"},
-        "expected": "Checkout succeeds", "actual": "Checkout fails", "evidence_ids": ["evidence-product-defect"],
+        "reproduction_steps": ["Run the selected checkout test", "Submit a valid checkout"],
+        "expected_behavior": "Checkout succeeds",
+        "actual_behavior": "Checkout fails",
+        "artifact_refs": ["artifact-checkout-log"],
+        "evidence_ids": ["evidence-product-run", "evidence-product-defect"],
     }
 
 
@@ -293,6 +308,41 @@ class EvaluatorTests(unittest.TestCase):
         diagnostics = evaluate(CASES / "repair-test-defect.json", workspace)
         self.assertIn("repair verification requires classified repair and bounded attempt evidence", diagnostics)
 
+    def test_product_handoff_requires_failed_selected_execution_and_linked_evidence(self):
+        workspace = Path(self.tmp.name) / "incomplete-product-evidence"
+        shutil.copytree(FIXTURES / "product-defect", workspace)
+        manifest = _manifest(workspace, status="handoff-required")
+        manifest["mode"] = "verify"
+        manifest["evidence"] = _product_defect_evidence()
+        manifest["evidence"][0]["exit_code"] = 0
+        manifest["handoffs"] = [_product_defect_handoff()]
+        target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "incomplete-evidence-state"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "handoff-required status requires failed selected-test execution and linked product-defect classification evidence",
+            evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state),
+        )
+
+    def test_product_handoff_requires_complete_defect_details_and_valid_refs(self):
+        workspace = Path(self.tmp.name) / "incomplete-product-handoff"
+        shutil.copytree(FIXTURES / "product-defect", workspace)
+        manifest = _manifest(workspace, status="handoff-required")
+        manifest["mode"] = "verify"
+        manifest["evidence"] = _product_defect_evidence()
+        handoff = _product_defect_handoff()
+        handoff.pop("reproduction_steps")
+        manifest["handoffs"] = [handoff]
+        target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "incomplete-handoff-state"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "handoff-required status requires complete product-defect handoff details with valid evidence and artifact refs",
+            evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state),
+        )
+
     def test_product_defect_resume_allows_only_the_authorized_source_patch(self):
         workspace = Path(self.tmp.name) / "product"
         shutil.copytree(FIXTURES / "product-defect", workspace)
@@ -300,7 +350,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["mode"] = "verify"
         manifest["run_id"] = "run-product-defect"
         manifest["revision"] = 7
-        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["evidence"] = _product_defect_evidence()
         manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "evaluator-state"
@@ -334,8 +384,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["mode"] = "verify"
         manifest["run_id"] = "run-fresh-product"
         manifest["revision"] = 8
-        manifest["evidence"] = [
-            {"id": "evidence-product-defect", **_product_defect_evidence()},
+        manifest["evidence"] = _product_defect_evidence() + [
             {"id": "evidence-reverification", **_verification_evidence("test-checkout")},
         ]
         manifest["handoffs"] = [_product_defect_handoff()]
@@ -355,7 +404,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["mode"] = "verify"
         manifest["run_id"] = "run-product-extra-source"
         manifest["revision"] = 7
-        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["evidence"] = _product_defect_evidence()
         manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "extra-source-state"
@@ -384,8 +433,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["mode"] = "verify"
         manifest["run_id"] = "run-malformed-product"
         manifest["revision"] = 8
-        manifest["evidence"] = [
-            {"id": "evidence-product-defect", **_product_defect_evidence()},
+        manifest["evidence"] = _product_defect_evidence() + [
             {"id": "evidence-reverification", **_verification_evidence("test-checkout")},
         ]
         manifest["handoffs"] = [_product_defect_handoff()]
@@ -409,7 +457,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["mode"] = "verify"
         manifest["run_id"] = "run-unpatched-product"
         manifest["revision"] = 7
-        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["evidence"] = _product_defect_evidence()
         manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "unpatched-state"
@@ -432,7 +480,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["mode"] = "verify"
         manifest["run_id"] = "run-original-product"
         manifest["revision"] = 7
-        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["evidence"] = _product_defect_evidence()
         manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "discontinuous-state"
@@ -492,6 +540,42 @@ class HostHarnessTests(unittest.TestCase):
         ):
             status = run_host_eval.run_case(host, case, keep_results=keep_results, host_timeout=timeout)
         return status, popen, evaluator, process
+
+    def test_two_phase_product_resume_allows_harness_skills_and_all_e2e_artifacts_only(self):
+        case_path, case = run_host_eval._read_case("product-defect-handoff")
+        for host in ("codex", "claude"):
+            with self.subTest(host=host), run_host_eval._workspace(case) as (_, workspace, state):
+                run_host_eval._install_skills(workspace, host)
+                target = workspace / ".e2e"
+                evidence_dir = target / "evidence"
+                evidence_dir.mkdir(parents=True)
+                (target / "test-plan.md").write_text("# Checkout verification plan\n")
+                (evidence_dir / "checkout.log").write_text("sanitized checkout failure\n")
+                manifest = _manifest(workspace, status="handoff-required")
+                manifest["mode"] = "verify"
+                manifest["run_id"] = f"run-{host}-product-resume"
+                manifest["revision"] = 7
+                manifest["evidence"] = _product_defect_evidence()
+                manifest["handoffs"] = [_product_defect_handoff()]
+                (target / "manifest.json").write_text(json.dumps(manifest))
+                self.assertEqual(evaluate(case_path, workspace, "handoff", state), [])
+
+                run_host_eval._apply_declared_patch(
+                    workspace, ROOT / "evals" / "patches" / "product-defect-fix.patch",
+                )
+                manifest["status"] = "verified"
+                manifest["revision"] = 8
+                manifest["evidence"].append(
+                    {"id": "evidence-reverification", **_verification_evidence("test-checkout")}
+                )
+                (target / "manifest.json").write_text(json.dumps(manifest))
+                self.assertEqual(evaluate(case_path, workspace, "resume", state), [])
+
+                (workspace / "src" / "unapproved.js").write_text("export const unsafe = true;\n")
+                self.assertIn(
+                    "unauthorized resume change: src/unapproved.js",
+                    evaluate(case_path, workspace, "resume", state),
+                )
 
     def test_refuses_a_missing_host_executable_before_creating_a_process(self):
         with (

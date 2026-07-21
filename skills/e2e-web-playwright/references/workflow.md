@@ -117,10 +117,13 @@ convenience. Record one evidence item per run with exactly these fields:
 
 Classify every failed or blocked selected test using
 [failure-classification.md](failure-classification.md). Preserve evidence before
-advancing manifest state. A product defect creates a `fix-product-defect`
-capability handoff with reproduction, expected/actual outcome, affected IDs,
-sanitized artifacts, environment context, confidence, and the resume command
-`e2e-web-playwright verify`; it never triggers application-code edits here.
+advancing manifest state. A product defect creates a handoff with `capability`
+set to `fix-product-defect`, scoped `journey_ids`, ordered
+`reproduction_steps`, `expected_behavior`, `actual_behavior`, valid
+`artifact_refs` and `evidence_ids`, and a `resume` object whose command is
+`e2e-web-playwright verify`. Its classification evidence must reference the
+failed selected-test execution evidence. It never triggers application-code
+edits here.
 
 ### Repair
 

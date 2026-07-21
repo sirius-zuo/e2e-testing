@@ -270,6 +270,55 @@ def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
                             errors.append(
                                 f"handoffs[{index}].journey_ids contains an unknown journey: {journey_id}"
                             )
+    _validate_evidence_references(data, errors)
+
+
+def _validate_evidence_references(data: dict[str, Any], errors: list[str]) -> None:
+    evidence = data.get("evidence")
+    handoffs = data.get("handoffs")
+    if not isinstance(evidence, list) or not isinstance(handoffs, list):
+        return
+    evidence_ids = {
+        item.get("id")
+        for item in evidence
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    artifact_ids = {
+        artifact.get("id")
+        for item in evidence
+        if isinstance(item, dict) and isinstance(item.get("artifacts"), list)
+        for artifact in item["artifacts"]
+        if isinstance(artifact, dict) and isinstance(artifact.get("id"), str)
+    }
+    for index, item in enumerate(evidence):
+        if not isinstance(item, dict) or not isinstance(item.get("classification"), dict):
+            continue
+        references = item["classification"].get("evidence_ids")
+        if isinstance(references, list):
+            if not all(isinstance(reference, str) for reference in references):
+                errors.append(f"evidence[{index}].classification.evidence_ids must be an array of strings")
+            for reference in references:
+                if isinstance(reference, str) and reference not in evidence_ids:
+                    errors.append(
+                        f"evidence[{index}].classification.evidence_ids contains an unknown evidence ID: {reference}"
+                    )
+    for index, item in enumerate(handoffs):
+        if not isinstance(item, dict):
+            continue
+        evidence_references = item.get("evidence_ids")
+        if isinstance(evidence_references, list):
+            if not all(isinstance(reference, str) for reference in evidence_references):
+                errors.append(f"handoffs[{index}].evidence_ids must be an array of strings")
+            for reference in evidence_references:
+                if isinstance(reference, str) and reference not in evidence_ids:
+                    errors.append(f"handoffs[{index}].evidence_ids contains an unknown evidence ID: {reference}")
+        artifact_references = item.get("artifact_refs")
+        if isinstance(artifact_references, list):
+            if not all(isinstance(reference, str) for reference in artifact_references):
+                errors.append(f"handoffs[{index}].artifact_refs must be an array of strings")
+            for reference in artifact_references:
+                if isinstance(reference, str) and reference not in artifact_ids:
+                    errors.append(f"handoffs[{index}].artifact_refs contains an unknown artifact ID: {reference}")
 
 
 def _find_secret_keys(value: Any, errors: list[str]) -> None:

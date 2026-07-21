@@ -210,6 +210,43 @@ def _is_execution_evidence(item: Any, test_ids: set[str]) -> bool:
     )
 
 
+def _is_failed_execution_evidence(item: Any, test_ids: set[str]) -> bool:
+    if not isinstance(item, dict):
+        return False
+    command = item.get("command")
+    command_ref = item.get("command_ref")
+    if not any(isinstance(value, str) and value.strip() for value in (command, command_ref)):
+        return False
+    exit_code = item.get("exit_code")
+    duration = item.get("duration_ms")
+    if (
+        isinstance(exit_code, bool) or not isinstance(exit_code, int) or exit_code == 0
+        or isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration < 0
+    ):
+        return False
+    selected = item.get("test_ids")
+    outcomes = item.get("outcomes")
+    environment = item.get("execution_environment")
+    if not isinstance(selected, list) or not selected or not all(isinstance(test_id, str) for test_id in selected):
+        return False
+    if not set(selected) <= test_ids or not isinstance(outcomes, list):
+        return False
+    failed_ids = {
+        outcome.get("test_id")
+        for outcome in outcomes
+        if isinstance(outcome, dict) and outcome.get("status") == "failed"
+    }
+    required_environment = {
+        "browser_project", "os_platform", "runtime", "application_build_ref", "target_reference", "target_tier",
+    }
+    return (
+        set(selected) <= failed_ids
+        and isinstance(environment, dict)
+        and required_environment <= set(environment)
+        and all(isinstance(environment[key], str) and environment[key] for key in required_environment)
+    )
+
+
 def _classification(item: Any, primary: str) -> bool:
     if not isinstance(item, dict) or not isinstance(item.get("classification"), dict):
         return False
@@ -222,6 +259,22 @@ def _classification(item: Any, primary: str) -> bool:
         and bool(classification["rationale"].strip())
         and isinstance(classification.get("evidence_ids"), list)
         and bool(classification["evidence_ids"])
+    )
+
+
+def _linked_classification(
+    item: Any,
+    primary: str,
+    evidence_ids: set[str],
+    required_evidence_ids: set[str],
+) -> bool:
+    if not _classification(item, primary):
+        return False
+    references = item["classification"]["evidence_ids"]
+    return (
+        all(isinstance(reference, str) for reference in references)
+        and set(references) <= evidence_ids
+        and bool(set(references) & required_evidence_ids)
     )
 
 
@@ -248,18 +301,62 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
     ):
         diagnostics.append("missing unsupported-framework detection evidence")
     if status == "handoff-required":
+        evidence_ids = _ids(evidence)
+        failed_evidence_ids = {
+            item["id"]
+            for item in evidence
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and _is_failed_execution_evidence(item, test_ids)
+        }
+        classification_ids = {
+            item["id"]
+            for item in evidence
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and _linked_classification(item, "product-defect", evidence_ids, failed_evidence_ids)
+        }
+        artifact_ids = {
+            artifact["id"]
+            for item in evidence
+            if isinstance(item, dict) and isinstance(item.get("artifacts"), list)
+            for artifact in item["artifacts"]
+            if isinstance(artifact, dict) and isinstance(artifact.get("id"), str)
+        }
         valid_handoff = any(
             isinstance(item, dict)
             and item.get("capability") == "fix-product-defect"
             and isinstance(item.get("journey_ids"), list)
             and bool(item["journey_ids"])
+            and set(item["journey_ids"]) <= _ids(manifest.get("journeys"))
             and isinstance(item.get("resume"), dict)
             and isinstance(item["resume"].get("command"), str)
             and bool(item["resume"]["command"].strip())
+            and isinstance(item.get("reproduction_steps"), list)
+            and bool(item["reproduction_steps"])
+            and all(isinstance(step, str) and step.strip() for step in item["reproduction_steps"])
+            and isinstance(item.get("expected_behavior"), str)
+            and bool(item["expected_behavior"].strip())
+            and isinstance(item.get("actual_behavior"), str)
+            and bool(item["actual_behavior"].strip())
+            and isinstance(item.get("artifact_refs"), list)
+            and bool(item["artifact_refs"])
+            and set(item["artifact_refs"]) <= artifact_ids
+            and isinstance(item.get("evidence_ids"), list)
+            and bool(item["evidence_ids"])
+            and set(item["evidence_ids"]) <= evidence_ids
+            and bool(set(item["evidence_ids"]) & failed_evidence_ids)
+            and bool(set(item["evidence_ids"]) & classification_ids)
             for item in handoffs if isinstance(handoffs, list)
         )
-        if not any(_classification(item, "product-defect") for item in evidence) or not valid_handoff:
-            diagnostics.append("handoff-required status requires product-defect classification and resumable handoff evidence")
+        if not failed_evidence_ids or not classification_ids:
+            diagnostics.append(
+                "handoff-required status requires failed selected-test execution and linked product-defect classification evidence"
+            )
+        if not valid_handoff:
+            diagnostics.append(
+                "handoff-required status requires complete product-defect handoff details with valid evidence and artifact refs"
+            )
     if status == "needs-authorization":
         valid_action = any(
             isinstance(item, dict)
@@ -431,7 +528,11 @@ def _check_authorized_patch(workspace: Path, fixture: Path, patch_reference: str
             if not relative.startswith(".git/") and relative != ".fixture-baseline.json"
         }
         for relative in sorted(set(actual_files) - set(expected_files)):
-            if relative == ".e2e/manifest.json" or relative.startswith(".e2e/evidence/") or relative.startswith(".e2e/handoffs/"):
+            if (
+                relative.startswith(".e2e/")
+                or relative.startswith(".agents/skills/")
+                or relative.startswith(".claude/skills/")
+            ):
                 continue
             diagnostics.append(f"unauthorized resume change: {relative}")
         return diagnostics

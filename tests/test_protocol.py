@@ -155,6 +155,38 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("next_actions[0].journey_ids contains an unknown journey: journey-missing", errors)
         self.assertIn("handoffs[0].journey_ids contains an unknown journey: journey-missing", errors)
 
+    def test_product_handoff_refs_must_resolve_to_manifest_evidence_and_artifacts(self):
+        manifest = new_manifest("/workspace/app", mode="verify")
+        manifest["journeys"] = [{"id": "journey-checkout", "status": "failed"}]
+        manifest["evidence"] = [
+            {
+                "id": "evidence-run", "artifacts": [{"id": "artifact-log"}],
+            },
+            {
+                "id": "evidence-classification",
+                "classification": {"evidence_ids": ["evidence-missing"]},
+            },
+        ]
+        manifest["handoffs"] = [{
+            "id": "handoff-product", "journey_ids": ["journey-checkout"],
+            "evidence_ids": ["evidence-missing"], "artifact_refs": ["artifact-missing"],
+        }]
+        errors = validate_manifest(manifest)
+        self.assertIn(
+            "evidence[1].classification.evidence_ids contains an unknown evidence ID: evidence-missing",
+            errors,
+        )
+        self.assertIn("handoffs[0].evidence_ids contains an unknown evidence ID: evidence-missing", errors)
+        self.assertIn("handoffs[0].artifact_refs contains an unknown artifact ID: artifact-missing", errors)
+
+        manifest["evidence"][1]["classification"]["evidence_ids"] = [123]
+        manifest["handoffs"][0]["evidence_ids"] = [123]
+        manifest["handoffs"][0]["artifact_refs"] = [{}]
+        errors = validate_manifest(manifest)
+        self.assertIn("evidence[1].classification.evidence_ids must be an array of strings", errors)
+        self.assertIn("handoffs[0].evidence_ids must be an array of strings", errors)
+        self.assertIn("handoffs[0].artifact_refs must be an array of strings", errors)
+
     def test_save_rejects_a_malformed_existing_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "manifest.json"

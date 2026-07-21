@@ -111,8 +111,13 @@ failure reference. Keep a capability handoff record for each delegated action:
 | `capability` | adapter or host-supported capability requested |
 | `requested_at` | timestamp of the persisted request |
 | `manifest_revision` | revision consumed by the delegate |
-| `journeys` | immutable list of scoped journey IDs |
-| `resume_condition` | result required before orchestration continues |
+| `journey_ids` | immutable list of scoped journey IDs |
+| `reproduction_steps` | ordered steps that reproduce the selected failure |
+| `expected_behavior` | supported behavior the selected test expected |
+| `actual_behavior` | observed behavior from failed execution evidence |
+| `artifact_refs` | valid IDs for sanitized logs, traces, screenshots, or videos |
+| `evidence_ids` | valid manifest evidence IDs, including the failed run and classification |
+| `resume` | object containing the exact command for resumed verification |
 | `result` | returned status, artifacts, and new evidence |
 
 The handoff must never include plaintext secrets. It may contain approved
