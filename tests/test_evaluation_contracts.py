@@ -561,6 +561,25 @@ class HostHarnessTests(unittest.TestCase):
         process.terminate.assert_not_called()
         process.kill.assert_not_called()
 
+    def test_windows_tree_cleanup_does_not_require_sigkill_to_exist(self):
+        process = mock.Mock(pid=4321)
+        process.wait.side_effect = [subprocess.TimeoutExpired("codex", 2), None]
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        original_sigkill = run_host_eval.signal.SIGKILL
+        try:
+            delattr(run_host_eval.signal, "SIGKILL")
+            with (
+                mock.patch.object(run_host_eval.os, "name", "nt"),
+                mock.patch("evals.run_host_eval.subprocess.run", return_value=completed) as run,
+            ):
+                run_host_eval._terminate_process_tree(process)
+        finally:
+            setattr(run_host_eval.signal, "SIGKILL", original_sigkill)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["taskkill", "/PID", "4321", "/T"], ["taskkill", "/PID", "4321", "/T", "/F"]],
+        )
+
     def test_timeout_concatenates_distinct_partial_and_drained_output(self):
         timeout = subprocess.TimeoutExpired("codex", 3, output="partial stdout", stderr="partial stderr")
         process = mock.Mock(pid=4321)
@@ -572,8 +591,34 @@ class HostHarnessTests(unittest.TestCase):
         ):
             with self.assertRaises(run_host_eval.HostTimeoutError) as raised:
                 run_host_eval._run_host(["codex"], Path(self.tmp.name), "prompt", 3)
-        self.assertEqual(raised.exception.stdout, "partial stdout\ndrained stdout")
-        self.assertEqual(raised.exception.stderr, "partial stderr\ndrained stderr")
+        self.assertEqual(raised.exception.stdout, "partial stdoutdrained stdout")
+        self.assertEqual(raised.exception.stderr, "partial stderrdrained stderr")
+
+    def test_timeout_overlap_merge_preserves_repeats_and_blank_lines(self):
+        partial = "first\n\nrepeat\n"
+        drained = "repeat\n\nsecond\nrepeat\n"
+        self.assertEqual(
+            run_host_eval._combine_output(partial, drained),
+            "first\n\nrepeat\n\nsecond\nrepeat\n",
+        )
+        self.assertEqual(
+            run_host_eval._combine_output("repeat\n", "other\nrepeat\n"),
+            "repeat\nother\nrepeat\n",
+        )
+
+    def test_timeout_preserves_primary_error_when_killpg_and_drain_fail(self):
+        timeout = subprocess.TimeoutExpired("codex", 3, output="partial stdout", stderr="partial stderr")
+        process = mock.Mock(pid=4321)
+        process.communicate.side_effect = [timeout, OSError("drain failed")]
+        process.wait.return_value = None
+        with (
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
+            mock.patch("evals.run_host_eval.os.killpg", side_effect=OSError("killpg failed")),
+        ):
+            with self.assertRaises(run_host_eval.HostTimeoutError) as raised:
+                run_host_eval._run_host(["codex"], Path(self.tmp.name), "prompt", 3)
+        self.assertEqual(raised.exception.stdout, "partial stdout")
+        self.assertEqual(raised.exception.stderr, "partial stderr")
 
     def test_real_git_boundary_is_external_and_retention_runs_after_evaluation(self):
         process = mock.Mock(pid=4321, returncode=0)
@@ -637,6 +682,29 @@ class HostHarnessTests(unittest.TestCase):
                 run_host_eval.run_case("codex", case["id"], host_timeout=1)
         setup.terminate.assert_called_once()
         setup.kill.assert_called_once()
+
+    def test_host_timeout_survives_setup_terminate_error_and_still_kills(self):
+        case = json.loads((CASES / "live-assisted-generation.json").read_text())
+        host_timeout = subprocess.TimeoutExpired("codex", 1, output="partial", stderr="")
+        host = mock.Mock(pid=4321)
+        host.communicate.side_effect = [host_timeout, ("", "")]
+        host.wait.return_value = None
+        setup = mock.Mock()
+        setup.terminate.side_effect = OSError("terminate failed")
+        setup.wait.return_value = None
+        response = mock.MagicMock(status=200)
+        response.__enter__.return_value = response
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=host),
+            mock.patch("evals.run_host_eval.os.killpg"),
+            mock.patch("evals.evaluate_result._spawn_setup", return_value=setup),
+            mock.patch("evals.evaluate_result.urllib.request.urlopen", return_value=response),
+        ):
+            with self.assertRaises(run_host_eval.HostTimeoutError):
+                run_host_eval.run_case("codex", case["id"], host_timeout=1)
+        setup.kill.assert_called_once()
+        setup.wait.assert_called_once_with(timeout=2)
 
 
 class SetupLifecycleTests(unittest.TestCase):

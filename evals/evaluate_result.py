@@ -68,23 +68,25 @@ def running_setup(case: dict[str, Any], workspace: Path):
         try:
             process.terminate()
         except OSError:
-            pass
+            force_kill = True
         else:
+            force_kill = False
             try:
                 process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-                else:
-                    try:
-                        process.wait(timeout=2)
-                    except (OSError, subprocess.TimeoutExpired):
-                        # Cleanup must not mask a host timeout or evaluator error.
-                        pass
+            except (OSError, subprocess.TimeoutExpired):
+                force_kill = True
+
+        if force_kill:
+            try:
+                process.kill()
             except OSError:
                 pass
+            else:
+                try:
+                    process.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    # Cleanup must not mask a host timeout or evaluator error.
+                    pass
 
 
 def _read_json(path: Path, label: str) -> tuple[dict[str, Any] | None, list[str]]:

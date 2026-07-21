@@ -224,25 +224,37 @@ def _taskkill_tree(pid: int, *, force: bool) -> None:
         pass
 
 
-def _signal_process_tree(process: subprocess.Popen[str], signal_number: int, fallback: str) -> None:
-    if os.name == "posix" and process.pid is not None:
-        try:
-            os.killpg(process.pid, signal_number)
-            return
-        except ProcessLookupError:
-            return
-    if os.name == "nt" and process.pid is not None:
-        _taskkill_tree(process.pid, force=signal_number == signal.SIGKILL)
+def _terminate_posix_process_group(process: subprocess.Popen[str], *, force: bool) -> None:
+    if process.pid is None:
         return
-    getattr(process, fallback)()
+    signal_number = signal.SIGKILL if force else signal.SIGTERM
+    try:
+        os.killpg(process.pid, signal_number)
+    except OSError:
+        # The process group may already be gone; preserve the primary timeout.
+        pass
+
+
+def _signal_process_tree(process: subprocess.Popen[str], *, force: bool) -> None:
+    if os.name == "posix":
+        _terminate_posix_process_group(process, force=force)
+        return
+    if os.name == "nt" and process.pid is not None:
+        _taskkill_tree(process.pid, force=force)
+        return
+    try:
+        getattr(process, "kill" if force else "terminate")()
+    except OSError:
+        # Direct-process fallback is best effort and must not mask a timeout.
+        pass
 
 
 def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
-    _signal_process_tree(process, signal.SIGTERM, "terminate")
+    _signal_process_tree(process, force=False)
     try:
         process.wait(timeout=TERMINATE_TIMEOUT)
     except subprocess.TimeoutExpired:
-        _signal_process_tree(process, signal.SIGKILL, "kill")
+        _signal_process_tree(process, force=True)
         try:
             process.wait(timeout=TERMINATE_TIMEOUT)
         except (OSError, subprocess.TimeoutExpired):
@@ -261,14 +273,16 @@ def _as_text(value: str | bytes | None) -> str:
 
 
 def _combine_output(*values: str | bytes | None) -> str:
-    lines: list[str] = []
-    seen: set[str] = set()
+    merged = ""
     for value in values:
-        for line in _as_text(value).splitlines():
-            if line and line not in seen:
-                seen.add(line)
-                lines.append(line)
-    return "\n".join(lines)
+        next_value = _as_text(value)
+        if not next_value:
+            continue
+        overlap = min(len(merged), len(next_value))
+        while overlap and not merged.endswith(next_value[:overlap]):
+            overlap -= 1
+        merged += next_value[overlap:]
+    return merged
 
 
 def _run_host(command: list[str], workspace: Path, prompt: str, timeout: float) -> tuple[str, str]:
@@ -281,7 +295,7 @@ def _run_host(command: list[str], workspace: Path, prompt: str, timeout: float) 
         _terminate_process_tree(process)
         try:
             drained_stdout, drained_stderr = process.communicate(timeout=TERMINATE_TIMEOUT)
-        except subprocess.TimeoutExpired:
+        except (OSError, subprocess.TimeoutExpired):
             drained_stdout, drained_stderr = "", ""
         raise HostTimeoutError(
             timeout,
