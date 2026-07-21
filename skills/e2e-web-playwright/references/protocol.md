@@ -3,10 +3,14 @@
 The adapter consumes protocol `1.0` manifests and uses the bundled utility as the
 authoritative validator and state writer. Resolve the utility from the installed
 adapter directory, never from an assumed `scripts/` directory in the target
-project. It can run directly: initialize `.e2e/manifest.json` when absent,
-record the requested mode and discovered Playwright selection, then validate
-before every state update. Keep adapter workflow artifacts in `.e2e/` and do not
-place secret values in the manifest or evidence.
+project. First perform the workflow's read-only framework gate. If it detects an
+alternate browser E2E framework, return `unsupported-framework` to the caller
+without calling the protocol utility, creating or validating `.e2e/`, or writing
+any target-project evidence. It can otherwise run directly: initialize
+`.e2e/manifest.json` when absent, record the requested mode and discovered
+Playwright selection, then validate before every state update. Keep adapter
+workflow artifacts in `.e2e/` and do not place secret values in the manifest or
+evidence.
 
 The CLI provides `init`, `validate`, and state `transition` convenience commands.
 For adapter-owned record updates beyond `status` and `next_actions`, load the

@@ -91,6 +91,11 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("`plan`, `generate`, `verify`, or `repair`", adapter_text)
         self.assertIn("default to `generate`", adapter_text)
         self.assertIn("bootstrap one with the bundled utility", adapter_text)
+        self.assertIn("read-only browser-framework detection", adapter_text)
+        self.assertLess(
+            adapter_text.index("read-only browser-framework detection"),
+            adapter_text.index("Validate an existing manifest"),
+        )
         self.assertIn("live inspection", adapter_text)
         self.assertIn("source/spec evidence", adapter_text)
         self.assertIn("unsupported-framework", adapter_text)
@@ -108,6 +113,47 @@ class SkillContractTests(unittest.TestCase):
 
         for playwright_api in ("page.getByRole", "test.describe", "expect("):
             self.assertNotIn(playwright_api, orchestrator_text)
+
+    def test_playwright_adapter_reference_safety_contract(self):
+        references = ROOT / "skills/e2e-web-playwright/references"
+        workflow = (references / "workflow.md").read_text()
+        workflow_semantics = " ".join(workflow.split())
+        failure = (references / "failure-classification.md").read_text()
+        repair = (references / "repair-guardrails.md").read_text()
+        protocol = (references / "protocol.md").read_text()
+        protocol_semantics = " ".join(protocol.split())
+
+        self.assertIn(
+            "Perform read-only browser-framework detection before validating or bootstrapping a manifest",
+            workflow,
+        )
+        self.assertIn("even when Playwright is also present", workflow)
+        self.assertIn("unconditionally stop as `unsupported-framework`", workflow)
+        self.assertIn("Do not create, update, or validate `.e2e/`", workflow)
+        self.assertIn(
+            "returned invocation outcome, not by a manifest write", workflow_semantics
+        )
+        self.assertLess(
+            workflow_semantics.index("Perform read-only browser-framework detection"),
+            workflow_semantics.index("validate an existing manifest"),
+        )
+        self.assertIn("without calling the protocol utility", protocol)
+
+        for field in (
+            "`execution_environment`",
+            "`browser_project`",
+            "`browser_version`",
+            "`os_platform`",
+            "`runtime`",
+            "`application_build_ref`",
+            "`target_reference`",
+            "`target_tier`",
+        ):
+            self.assertIn(field, workflow)
+        self.assertIn("never a secret value", workflow)
+        self.assertIn("only a `test-defect`", failure)
+        self.assertIn("must not include application source", repair)
+        self.assertIn("Never hand-edit a manifest", protocol_semantics)
 
 
 if __name__ == "__main__":
