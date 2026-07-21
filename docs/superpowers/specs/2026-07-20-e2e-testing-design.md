@@ -1,6 +1,6 @@
 # E2E Testing Agent Skills Design
 
-**Date:** 2026-07-20  
+**Date:** 2026-07-20
 **Status:** Approved for implementation planning
 **Project:** `e2e-testing`
 
