@@ -1,0 +1,1 @@
+{"tier":"staging","base_url_ref":"env:E2E_BASE_URL","credentials_ref":"env:E2E_USER_TOKEN"}
