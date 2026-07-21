@@ -23,13 +23,13 @@ description: Plan, generate, verify, and safely repair Playwright browser E2E co
 - `plan`: enrich journeys with web preconditions and observable outcomes.
 - `generate`: use live inspection when authorized and available; otherwise use source/spec evidence. Do not execute the suite. End `generated-unverified`.
 - `verify`: authorize the target, run manifest-selected IDs, preserve evidence, and classify every failure.
-- `repair`: require a recorded test defect, change test/support files only, then invoke `verify`.
+- `repair`: require a recorded test defect, change test/support files only, then invoke `verify`. Repair changes are bounded by manifest budgets.
 
 ## Stop safely
 
 - Never modify application code.
 - Never weaken expected outcomes, delete coverage, add unconditional skips, or add hardcoded sleeps.
-- Emit capability handoffs for product defects, environments, credentials, or authorization.
+- Emit a fix-product-defect capability handoff for product defects, plus handoffs for environments, credentials, or authorization.
 - End when budgets are exhausted; do not loop indefinitely.
 
 ## Resources

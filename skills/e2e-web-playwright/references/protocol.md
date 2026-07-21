@@ -1,11 +1,21 @@
 # Adapter protocol usage
 
 The adapter consumes protocol `1.0` manifests and uses the bundled utility as the
-authoritative validator and state writer. It can run directly: initialize
-`.e2e/manifest.json` when absent, record the requested mode and discovered
-Playwright selection, then validate before every state update. Keep adapter
-workflow artifacts in `.e2e/` and do not place secret values in the manifest or
-evidence.
+authoritative validator and state writer. Resolve the utility from the installed
+adapter directory, never from an assumed `scripts/` directory in the target
+project. It can run directly: initialize `.e2e/manifest.json` when absent,
+record the requested mode and discovered Playwright selection, then validate
+before every state update. Keep adapter workflow artifacts in `.e2e/` and do not
+place secret values in the manifest or evidence.
+
+The CLI provides `init`, `validate`, and state `transition` convenience commands.
+For adapter-owned record updates beyond `status` and `next_actions`, load the
+bundled `e2e_protocol.py` from its explicit adapter path (for example with
+Python's `importlib.util.spec_from_file_location`) and call its public
+`save_manifest(manifest_path, data, expected_revision)` function. Read the
+current manifest first, preserve its history, supply its current revision, and
+let that function validate, atomically write, and increment the revision. Never
+hand-edit a manifest or overwrite it with a stale revision.
 
 ## Adapter-owned records
 

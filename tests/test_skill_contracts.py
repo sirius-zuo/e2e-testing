@@ -97,11 +97,13 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("generated-unverified", adapter_text)
         self.assertIn("recorded test defect", adapter_text)
         self.assertIn("test/support files only", adapter_text)
+        self.assertIn("Repair changes are bounded by manifest budgets", adapter_text)
         self.assertIn("Never modify application code", adapter_text)
         self.assertIn("Never weaken expected outcomes", adapter_text)
         self.assertIn("unconditional skips", adapter_text)
         self.assertIn("hardcoded sleeps", adapter_text)
         self.assertIn("product defects", adapter_text)
+        self.assertIn("fix-product-defect capability handoff", adapter_text)
         self.assert_relative_links_exist(ROOT / "skills/e2e-web-playwright")
 
         for playwright_api in ("page.getByRole", "test.describe", "expect("):
