@@ -65,6 +65,15 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("non-destructive observation only", safety)
         self.assertIn("categorically prohibited", safety)
         self.assertIn("one-off approval cannot override", safety)
+        self.assertIn(
+            "Every destructive data operation outside production requires exact-action approval",
+            safety,
+        )
+        self.assertIn("including local and test reset endpoints", safety)
+        self.assertIn(
+            "In production, mutation, payment, irreversible deletion, and test-data mutation",
+            safety,
+        )
         self.assertIn("python3 scripts/e2e_protocol.py --help", protocol)
         self.assertIn("python3 scripts/e2e_protocol.py init --help", protocol)
         self.assertIn("python3 scripts/e2e_protocol.py validate --help", protocol)

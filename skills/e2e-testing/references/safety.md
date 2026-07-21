@@ -21,6 +21,8 @@ allowed target. Maintain a clear link between each risky action, its journey,
 and its recorded target configuration or approval. An approval never authorizes
 an action that this policy categorically prohibits.
 
+Every destructive data operation outside production requires exact-action approval, regardless of tier, including local and test reset endpoints. Exact-action approval must identify the target, operation, affected data, and time window.
+
 ## Environment tiers
 
 | Tier | Typical target | Default access | Notes |
@@ -28,7 +30,7 @@ an action that this policy categorically prohibits.
 | local | developer machine or disposable local service | allowed after repository instructions | use isolated data where possible |
 | test | dedicated test or CI environment | allowed with stated target | prefer resettable fixtures |
 | staging | pre-production shared environment | only with an explicitly configured staging target | configuration is required even for read-only work |
-| production | customer-facing live environment | only under an explicit configured production allow-policy; non-destructive observation only | mutations and external effects are prohibited |
+| production | customer-facing live environment | only under an explicit configured production allow-policy; non-destructive observation only | In production, mutations and external effects are prohibited |
 | unknown | target cannot be classified | no interaction | request clarification first |
 
 A hostname, branch name, or visual similarity is insufficient to establish a
@@ -37,9 +39,9 @@ fields or handoff context.
 
 Any staging interaction, including read-only observation, requires an
 explicitly configured staging target. Target configuration establishes where the
-action may run; it is not approval for a mutation. Production interaction
-requires an explicit configured production allow-policy and is limited to
-non-destructive observation only.
+action may run; it is not approval for a mutation or destructive operation. In
+production, interaction requires an explicit configured production allow-policy
+and is limited to non-destructive observation only.
 
 ## Risk gates
 
@@ -50,16 +52,20 @@ Classify each planned action before execution.
 | low | read-only navigation in local or test | record target and proceed |
 | medium | creating disposable test records, test login | confirm known cleanup path and target tier |
 | medium | read-only staging observation | explicitly configured staging target |
+| high | destructive data operation outside production, including a local or test reset endpoint | exact-action approval; staging also requires an explicitly configured target |
 | high | staging mutation, destructive work, privileged role, external side effect | configured staging target plus additional approval for mutation or destructive work |
-| prohibited | production mutation, payment, irreversible deletion, or test-data mutation | categorically prohibited; do not perform |
+| prohibited | production mutation, payment, irreversible deletion, or test-data mutation | In production, categorically prohibited; do not perform |
 
 Approval is specific to the target, action, data class, and time window. Do not
 reuse a staging approval for production, or a read-only approval for a write.
-For staging mutation or destructive work, an additional approval is required
-after the target has been explicitly configured. If an operation becomes
-riskier than planned, stop and request a new approval.
+Every destructive data operation outside production requires exact-action
+approval, including local and test reset endpoints. For staging mutation or
+destructive work, the target must first be explicitly configured and the
+additional approval for mutation or destructive work must cover the exact
+action. If an operation becomes riskier than planned, stop and request a new
+approval.
 
-Production mutation, payment, irreversible deletion, and test-data mutation
+In production, mutation, payment, irreversible deletion, and test-data mutation
 are categorically prohibited. A one-off approval cannot override this
 prohibition, including an approval that otherwise names the exact action.
 
@@ -84,9 +90,11 @@ blocked and request the approved provision path.
 Prefer fixtures, unique test prefixes, and supported reset endpoints in local
 or test tiers. Describe setup, expected mutation, cleanup, and verification in
 the journey record. Confirm cleanup succeeded before claiming a data-mutating
-journey is complete.
+journey is complete. Local and test reset endpoints are not exempt from the
+exact-action approval required for every destructive data operation outside
+production.
 
-Never use production customer data as test fixture material. Production
+In production, never use customer data as test fixture material. In production,
 mutation, payment, irreversible deletion, and test-data mutation are
 categorically prohibited; a one-off approval cannot override this rule. In
 staging, avoid destructive queries, mass updates, billing events, email
