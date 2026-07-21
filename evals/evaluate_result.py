@@ -303,6 +303,11 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         }
         expected_phase = expect.get("_phase_name", manifest.get("mode"))
         expected_revision = manifest.get("revision")
+        valid_final_revision = type(expected_revision) is int and expected_revision >= 1
+        if not valid_final_revision:
+            diagnostics.append(
+                "verified status requires final manifest revision to be a non-boolean integer >= 1"
+            )
         evidence_by_id = {
             item["id"]: item
             for item in evidence
@@ -311,13 +316,22 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         for required_id in expect.get("required_execution_evidence_ids", []):
             item = evidence_by_id.get(required_id)
             selected_ids = set(item.get("test_ids", [])) if isinstance(item, dict) else set()
-            if not (
-                _is_execution_evidence(item, test_ids)
-                and item.get("manifest_revision_consumed") == expected_revision - 1
-                and not isinstance(item.get("manifest_revision_consumed"), bool)
-                and item.get("phase") == expected_phase
-                and scoped_test_ids <= selected_ids
+            if not _is_execution_evidence(item, test_ids) or not (
+                item.get("phase") == expected_phase and scoped_test_ids <= selected_ids
             ):
+                diagnostics.append(
+                    "required execution evidence is not bound to this phase, revision, and scoped tests: "
+                    f"{required_id}"
+                )
+                continue
+            consumed_revision = item.get("manifest_revision_consumed")
+            if type(consumed_revision) is not int or consumed_revision < 0:
+                diagnostics.append(
+                    "required execution evidence manifest_revision_consumed must be a non-boolean integer >= 0: "
+                    f"{required_id}"
+                )
+                continue
+            if valid_final_revision and expected_revision != consumed_revision + 1:
                 diagnostics.append(
                     "required execution evidence is not bound to this phase, revision, and scoped tests: "
                     f"{required_id}"

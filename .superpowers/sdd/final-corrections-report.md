@@ -284,3 +284,59 @@ exit 0
 - Existing verify, repair, resume, and harness evidence fixtures use consistent
   consumed-revision values, and the Playwright guide explains the N to N+1 save.
 - No live host was started; unrelated untracked files remain preserved.
+
+---
+
+# Revision numeric guards — 2026-07-21
+
+## Scope
+
+This pass prevents Python numeric coercions from weakening atomic-save revision
+binding. Final and consumed revisions must be exact integers with valid ranges
+before the evaluator performs the N+1 relationship check.
+
+## RED evidence
+
+```text
+python3 -m unittest <three numeric-guard tests plus the real-save acceptance test> -v
+4 tests: 8 expected subtest failures, 1 pass
+```
+
+The failures showed that integral floats and booleans could compare equal to
+integer revisions, malformed values produced only the general binding message,
+and the impossible final revision 0 / consumed revision -1 pair was accepted.
+The real atomic-save revision 1 to revision 2 case continued to pass.
+
+## GREEN evidence
+
+```text
+python3 -m unittest <three numeric guards, real-save acceptance, and wrong-revision rejection> -v
+5 tests: OK
+
+python3 scripts/sync_protocol.py --check
+exit 0
+
+python3 scripts/validate_skills.py
+validated: 2 skills
+
+python3 -m unittest discover
+83 tests: OK
+
+git diff --check
+exit 0
+```
+
+## Corrections and self-review
+
+- Final manifest revision must have exact type `int`, excluding `bool`, and be
+  at least 1.
+- `manifest_revision_consumed` must have exact type `int`, excluding `bool`, and
+  be at least 0.
+- Type and range guards execute before addition or equality checks, so malformed
+  values cannot exploit float/integer or boolean/integer equality.
+- Stable diagnostics distinguish an invalid final revision from an invalid
+  consumed revision; valid integers that do not satisfy final = consumed + 1
+  retain the established binding diagnostic.
+- Focused coverage includes integral floats, booleans, negatives, zero, the
+  impossible 0/-1 pair, correct real-save behavior, and unrelated revisions.
+- No live host was started; unrelated untracked files remain preserved.

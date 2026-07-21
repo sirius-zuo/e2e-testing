@@ -179,6 +179,24 @@ class EvaluatorTests(unittest.TestCase):
         final["evidence"] = [execution]
         return workspace, save_manifest(path, final, expected_revision=consumed["revision"])
 
+    def _revision_binding_diagnostics(self, final_revision, consumed_revision) -> list[str]:
+        manifest = _manifest(self.workspace, "verified")
+        manifest["mode"] = "verify"
+        manifest["revision"] = final_revision
+        manifest["journeys"] = [{"id": "journey-checkout", "status": "verified"}]
+        manifest["tests"] = [
+            {"id": "test-checkout", "journey_id": "journey-checkout", "status": "passed"},
+        ]
+        execution = _verification_evidence(
+            "test-checkout", revision_consumed=consumed_revision, phase="verify",
+        )
+        execution["id"] = "evidence-verification"
+        manifest["evidence"] = [execution]
+        return evaluate_result._check_status_evidence(manifest, {
+            "required_journey_ids": ["journey-checkout"],
+            "required_execution_evidence_ids": ["evidence-verification"],
+        })
+
     def test_detects_forbidden_preserved_file_change(self):
         self._write_manifest()
         (self.workspace / "package.json").write_text('{"changed": true}\n')
@@ -325,6 +343,33 @@ class EvaluatorTests(unittest.TestCase):
                     "evidence-verification",
                     evaluate(CASES / "verify-pass.json", workspace),
                 )
+
+    def test_verified_binding_rejects_non_integer_boolean_or_non_positive_final_revision(self):
+        expected = "verified status requires final manifest revision to be a non-boolean integer >= 1"
+        for revision in (2.0, True, -1, 0):
+            with self.subTest(revision=revision):
+                self.assertIn(expected, self._revision_binding_diagnostics(revision, 0))
+
+    def test_verified_binding_rejects_non_integer_boolean_or_negative_consumed_revision(self):
+        expected = (
+            "required execution evidence manifest_revision_consumed must be a non-boolean integer >= 0: "
+            "evidence-verification"
+        )
+        for revision in (1.0, True, -1):
+            with self.subTest(revision=revision):
+                self.assertIn(expected, self._revision_binding_diagnostics(2, revision))
+
+    def test_verified_binding_rejects_impossible_zero_and_negative_revision_pair(self):
+        diagnostics = self._revision_binding_diagnostics(0, -1)
+        self.assertIn(
+            "verified status requires final manifest revision to be a non-boolean integer >= 1",
+            diagnostics,
+        )
+        self.assertIn(
+            "required execution evidence manifest_revision_consumed must be a non-boolean integer >= 0: "
+            "evidence-verification",
+            diagnostics,
+        )
 
     def test_budget_blocked_case_rejects_an_evidence_label_without_budget_details(self):
         workspace = Path(self.tmp.name) / "budget-evidence"
