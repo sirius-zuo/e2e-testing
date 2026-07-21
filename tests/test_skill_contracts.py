@@ -50,6 +50,17 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("generated-unverified", text)
         self.assertIn("next_actions", text)
         self.assertIn("e2e-web-playwright", text)
+        self.assertIn(
+            "read-only browser-framework discovery before validating or bootstrapping a manifest",
+            text,
+        )
+        self.assertIn("even when Playwright is also present", text)
+        self.assertIn("without target-repository mutation", text)
+        self.assertIn("pre-manifest `unsupported-framework` result is returned, not persisted", text)
+        self.assertLess(
+            text.index("read-only browser-framework discovery"),
+            text.index("Validate a compatible `.e2e/manifest.json`"),
+        )
         self.assertNotIn("You are a senior", text)
         self.assertNotIn("allowed-tools:", text)
         self.assert_relative_links_exist(ROOT / "skills/e2e-testing")
@@ -119,7 +130,9 @@ class SkillContractTests(unittest.TestCase):
         workflow = (references / "workflow.md").read_text()
         workflow_semantics = " ".join(workflow.split())
         failure = (references / "failure-classification.md").read_text()
+        failure_semantics = " ".join(failure.split())
         repair = (references / "repair-guardrails.md").read_text()
+        repair_semantics = " ".join(repair.split())
         protocol = (references / "protocol.md").read_text()
         protocol_semantics = " ".join(protocol.split())
 
@@ -139,21 +152,38 @@ class SkillContractTests(unittest.TestCase):
         )
         self.assertIn("without calling the protocol utility", protocol)
 
-        for field in (
-            "`execution_environment`",
-            "`browser_project`",
-            "`browser_version`",
-            "`os_platform`",
-            "`runtime`",
-            "`application_build_ref`",
-            "`target_reference`",
-            "`target_tier`",
-        ):
-            self.assertIn(field, workflow)
-        self.assertIn("never a secret value", workflow)
-        self.assertIn("only a `test-defect`", failure)
-        self.assertIn("must not include application source", repair)
+        self.assertIn(
+            "`execution_environment` | distinct sanitized record with "
+            "`browser_project`, `browser_version` when available, "
+            "`os_platform`, `runtime`, `application_build_ref`, "
+            "`target_reference`, and `target_tier`; never copy secrets",
+            workflow_semantics,
+        )
+        self.assertIn("Choose exactly one mutually exclusive primary outcome.", failure_semantics)
+        self.assertIn(
+            "only a `test-defect` at `0.80` or higher may enter repair.",
+            failure_semantics,
+        )
+        self.assertIn(
+            "use `inconclusive` and stop rather than repair.", failure_semantics
+        )
+        self.assertIn("an explicit allowed-path list.", repair_semantics)
+        self.assertIn("must not include application source", repair_semantics)
+        self.assertIn(
+            "compare every changed test's assertions and journey comments",
+            repair_semantics,
+        )
+        self.assertIn("Do not exceed either repair or wall-clock budget.", repair_semantics)
+        self.assertIn("After every repair, invoke `verify`", repair_semantics)
         self.assertIn("Never hand-edit a manifest", protocol_semantics)
+        self.assertLess(
+            protocol_semantics.index("First perform the workflow's read-only framework gate."),
+            protocol_semantics.index("It can otherwise run directly"),
+        )
+        self.assertIn(
+            "without calling the protocol utility, creating or validating `.e2e/`, or writing any target-project evidence.",
+            protocol_semantics,
+        )
 
 
 if __name__ == "__main__":

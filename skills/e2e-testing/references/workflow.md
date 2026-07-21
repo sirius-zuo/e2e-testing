@@ -17,7 +17,14 @@ verification. Those decisions belong to the routed adapter or capability.
 
 Start with the requested mode and the project root. Read repository-level
 instructions before inspecting application source, package metadata, tests, or
-targets. A manifest is the durable record of the work; update it before a
+targets. Before reading, validating, or initializing a manifest, perform a
+read-only browser-framework discovery from package metadata, lockfiles, browser
+test scripts, configuration, existing specs, fixtures, and CI commands. If any
+alternate browser E2E framework is detected, including alongside Playwright,
+return `unsupported-framework` to the caller with the detected framework and
+source locations. Do not create, update, validate, or otherwise mutate
+`.e2e/` or the target repository for that outcome. A manifest is the durable
+record of work only after this framework gate passes; then update it before a
 handoff and after receiving a handoff result.
 
 ## Discovery inventory
@@ -73,15 +80,17 @@ as part of this decision.
 
 | Detected condition | Persisted action | Result |
 | --- | --- | --- |
-| Playwright is present | `e2e-web-playwright` | hand off to the adapter |
+| Cypress, WebdriverIO, Selenium, or another framework is present, even with Playwright | `unsupported-framework` | return the framework and read-only evidence; make no target-repository mutation |
+| Playwright is present with no alternate browser framework | `e2e-web-playwright` | hand off to the adapter |
 | No browser E2E framework is present | `e2e-web-playwright` | hand off to the adapter |
-| Cypress, WebdriverIO, Selenium, or another framework is present | `unsupported-framework` | report framework; make no infrastructure change |
-| Framework evidence conflicts | `needs-clarification` | preserve evidence and ask |
+| Framework evidence is ambiguous but does not establish an alternate framework | `needs-clarification` | ask without infrastructure change |
 
 Direct routing is appropriate when the host can invoke the named adapter.
 Automated routing is appropriate only when the host has an authorized capability
-for delegation. In both cases, persist the action first, including its inputs,
-manifest revision, target journey IDs, and expected resume condition.
+for delegation. After the framework gate passes, persist the action first,
+including its inputs, manifest revision, target journey IDs, and expected resume
+condition. The pre-manifest `unsupported-framework` return is the exception: it
+is reported to the caller without target-repository persistence.
 
 ## Actions and handoffs
 
