@@ -134,11 +134,19 @@ class EvaluatorTests(unittest.TestCase):
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
-            "required new path missing: tests/checkout.generated.spec.ts",
+            "required new path missing: tests/**/*checkout*.spec.*",
             evaluate(CASES / "existing-playwright.json", workspace),
         )
-        (workspace / "tests" / "checkout.generated.spec.ts").write_text("// newly generated checkout coverage\n")
+        (workspace / "tests" / "checkout.purchase.spec.ts").write_text("// newly generated checkout coverage\n")
         self.assertEqual(evaluate(CASES / "existing-playwright.json", workspace), [])
+
+    def test_verify_pass_contract_targets_the_runnable_existing_login_journey(self):
+        case = json.loads((CASES / "verify-pass.json").read_text())
+        fixture = FIXTURES / "existing-playwright"
+        self.assertIn("login", case["prompt"])
+        self.assertEqual(case["expect"]["required_journey_ids"], ["journey-login"])
+        self.assertTrue((fixture / "tests" / "login.logic.test.js").is_file())
+        self.assertEqual(subprocess.run(["node", "--test"], cwd=fixture, capture_output=True).returncode, 0)
 
     def test_repair_case_requires_the_precise_stale_locator_repair(self):
         workspace = Path(self.tmp.name) / "repair-contract"
@@ -167,12 +175,14 @@ class EvaluatorTests(unittest.TestCase):
         ]
         manifest["handoffs"] = [{"id": "handoff-product-defect", "owner": "product-team"}]
         target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "evaluator-state"
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertEqual(
-            evaluate(CASES / "product-defect-handoff.json", workspace, phase="handoff"), [],
+            evaluate(CASES / "product-defect-handoff.json", workspace, phase="handoff", state_dir=state), [],
         )
-        self.assertTrue((target / ".eval-checkpoint-product-defect-handoff-handoff.json").is_file())
+        self.assertFalse((target / ".eval-checkpoint-product-defect-handoff-handoff.json").exists())
+        self.assertTrue((state / "product-defect-handoff-handoff.json").is_file())
         subprocess.run(
             ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],
             cwd=workspace, check=True,
@@ -182,7 +192,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["evidence"].append({"id": "evidence-reverification"})
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertEqual(
-            evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume"), [],
+            evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume", state_dir=state), [],
         )
 
     def test_product_defect_resume_rejects_a_fresh_run_without_handoff_checkpoint(self):
@@ -200,11 +210,37 @@ class EvaluatorTests(unittest.TestCase):
         ]
         manifest["handoffs"] = [{"id": "handoff-product-defect", "owner": "product-team"}]
         target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "fresh-state"
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
             "missing phase checkpoint: handoff",
-            evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume"),
+            evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume", state_dir=state),
+        )
+
+    def test_product_defect_resume_rejects_a_malformed_external_checkpoint(self):
+        workspace = Path(self.tmp.name) / "malformed-product"
+        shutil.copytree(FIXTURES / "product-defect", workspace)
+        subprocess.run(
+            ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],
+            cwd=workspace, check=True,
+        )
+        manifest = _manifest(workspace, status="verified")
+        manifest["run_id"] = "run-malformed-product"
+        manifest["revision"] = 8
+        manifest["evidence"] = [{"id": "evidence-product-defect"}, {"id": "evidence-reverification"}]
+        manifest["handoffs"] = [{"id": "handoff-product-defect"}]
+        target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "malformed-state"
+        target.mkdir()
+        state.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        (state / "product-defect-handoff-handoff.json").write_text(
+            json.dumps({"run_id": "run-malformed-product", "revision": "eight", "handoff_ids": []})
+        )
+        self.assertEqual(
+            evaluate(CASES / "product-defect-handoff.json", workspace, "resume", state),
+            ["invalid phase checkpoint: handoff"],
         )
 
     def test_product_defect_resume_rejects_an_unapplied_declared_patch(self):
@@ -216,16 +252,17 @@ class EvaluatorTests(unittest.TestCase):
         manifest["evidence"] = [{"id": "evidence-product-defect"}]
         manifest["handoffs"] = [{"id": "handoff-product-defect"}]
         target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "unpatched-state"
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
-        self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff"), [])
+        self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state), [])
         manifest["status"] = "verified"
         manifest["revision"] = 8
         manifest["evidence"].append({"id": "evidence-reverification"})
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
             "authorized patch not applied: src/checkout.js",
-            evaluate(CASES / "product-defect-handoff.json", workspace, "resume"),
+            evaluate(CASES / "product-defect-handoff.json", workspace, "resume", state),
         )
 
     def test_product_defect_resume_rejects_a_discontinuous_run_id(self):
@@ -237,9 +274,10 @@ class EvaluatorTests(unittest.TestCase):
         manifest["evidence"] = [{"id": "evidence-product-defect"}]
         manifest["handoffs"] = [{"id": "handoff-product-defect"}]
         target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "discontinuous-state"
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
-        self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff"), [])
+        self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state), [])
         subprocess.run(
             ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],
             cwd=workspace, check=True,
@@ -251,7 +289,7 @@ class EvaluatorTests(unittest.TestCase):
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
             "run continuity: expected run-original-product, found run-restarted-product",
-            evaluate(CASES / "product-defect-handoff.json", workspace, "resume"),
+            evaluate(CASES / "product-defect-handoff.json", workspace, "resume", state),
         )
 
     def test_runnable_defect_fixtures_expose_the_repair_outcomes(self):
@@ -261,8 +299,8 @@ class EvaluatorTests(unittest.TestCase):
         shutil.copytree(FIXTURES / "product-defect", product)
         self.assertNotEqual(subprocess.run(["node", "--test"], cwd=repair, capture_output=True).returncode, 0)
         self.assertNotEqual(subprocess.run(["node", "--test"], cwd=product, capture_output=True).returncode, 0)
-        (repair / "tests" / "checkout.logic.test.js").write_text(
-            (repair / "tests" / "checkout.logic.test.js").read_text().replace("Submit now", "Place order")
+        (repair / "tests" / "checkout.spec.ts").write_text(
+            (repair / "tests" / "checkout.spec.ts").read_text().replace("Submit now", "Place order")
         )
         subprocess.run(
             ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],

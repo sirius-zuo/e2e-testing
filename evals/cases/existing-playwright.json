@@ -10,6 +10,6 @@
     "journey_traceability": ["journey-checkout"],
     "required_evidence_ids": ["evidence-existing-suite"],
     "unchanged_globs": ["package.json", "playwright.config.ts", "tests/fixtures.ts", "tests/login.spec.ts"],
-    "created_globs": ["tests/checkout.generated.spec.ts"]
+    "created_globs": ["tests/**/*checkout*.spec.*"]
   }
 }

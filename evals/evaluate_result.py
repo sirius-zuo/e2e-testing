@@ -7,6 +7,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -21,6 +22,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_PROTOCOL = ROOT / "skills" / "e2e-testing" / "scripts" / "e2e_protocol.py"
+CHECKPOINT_RUN_ID = re.compile(r"run-[a-z0-9-]+$")
 
 
 def _load_validator():
@@ -198,18 +200,34 @@ def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list
     return diagnostics
 
 
-def _checkpoint_path(workspace: Path, case_id: str, phase: str) -> Path:
-    return workspace / ".e2e" / f".eval-checkpoint-{case_id}-{phase}.json"
+def _checkpoint_path(state_dir: Path, case_id: str, phase: str) -> Path:
+    return state_dir / f"{case_id}-{phase}.json"
 
 
-def _check_continuity(workspace: Path, case: dict[str, Any], manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+def _check_continuity(state_dir: Path | None, case: dict[str, Any], manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
     previous_phase = expect.get("_resume_from")
     if not previous_phase:
         return []
-    checkpoint, errors = _read_json(_checkpoint_path(workspace, case["id"], previous_phase), "phase checkpoint")
+    if state_dir is None:
+        return ["missing evaluator state directory"]
+    checkpoint, errors = _read_json(_checkpoint_path(state_dir, case["id"], previous_phase), "phase checkpoint")
     if errors:
-        return [f"missing phase checkpoint: {previous_phase}"]
+        return [
+            f"missing phase checkpoint: {previous_phase}"
+            if errors[0].startswith("missing") else f"invalid phase checkpoint: {previous_phase}"
+        ]
     assert checkpoint is not None
+    if (
+        set(checkpoint) != {"run_id", "revision", "handoff_ids"}
+        or not isinstance(checkpoint["run_id"], str)
+        or not CHECKPOINT_RUN_ID.fullmatch(checkpoint["run_id"])
+        or not isinstance(checkpoint["revision"], int)
+        or isinstance(checkpoint["revision"], bool)
+        or checkpoint["revision"] < 0
+        or not isinstance(checkpoint["handoff_ids"], list)
+        or not all(isinstance(item, str) for item in checkpoint["handoff_ids"])
+    ):
+        return [f"invalid phase checkpoint: {previous_phase}"]
     diagnostics: list[str] = []
     if manifest.get("run_id") != checkpoint.get("run_id"):
         diagnostics.append(
@@ -253,8 +271,9 @@ def _check_authorized_patch(workspace: Path, fixture: Path, patch_reference: str
         return diagnostics
 
 
-def _save_checkpoint(workspace: Path, case: dict[str, Any], phase: str, manifest: dict[str, Any]) -> None:
-    path = _checkpoint_path(workspace, case["id"], phase)
+def _save_checkpoint(state_dir: Path, case: dict[str, Any], phase: str, manifest: dict[str, Any]) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = _checkpoint_path(state_dir, case["id"], phase)
     checkpoint = {
         "run_id": manifest["run_id"],
         "revision": manifest["revision"],
@@ -263,7 +282,12 @@ def _save_checkpoint(workspace: Path, case: dict[str, Any], phase: str, manifest
     path.write_text(json.dumps(checkpoint, sort_keys=True), encoding="utf-8")
 
 
-def evaluate(case_path: str | Path, workspace: str | Path, phase: str | None = None) -> list[str]:
+def evaluate(
+    case_path: str | Path,
+    workspace: str | Path,
+    phase: str | None = None,
+    state_dir: str | Path | None = None,
+) -> list[str]:
     """Return stable acceptance diagnostics; an empty list means the case passes."""
     case_file = Path(case_path)
     root = Path(workspace)
@@ -278,6 +302,13 @@ def evaluate(case_path: str | Path, workspace: str | Path, phase: str | None = N
     expect, phase_errors = _phase_expectation(case, phase)
     if phase_errors:
         return phase_errors
+    evaluator_state = Path(state_dir) if state_dir is not None else None
+    if evaluator_state is not None:
+        try:
+            evaluator_state.resolve().relative_to(root.resolve())
+            return ["evaluator state must be outside workspace"]
+        except ValueError:
+            pass
 
     diagnostics = _check_files(root, ROOT / "evals" / "fixtures" / case["fixture"], expect)
     manifest_path = root / ".e2e" / "manifest.json"
@@ -298,12 +329,15 @@ def evaluate(case_path: str | Path, workspace: str | Path, phase: str | None = N
         )
     diagnostics.extend(_check_required_ids(manifest, expect))
     diagnostics.extend(_check_traceability(manifest, expect))
-    diagnostics.extend(_check_continuity(root, case, manifest, expect))
+    if expect.get("_checkpoint") and evaluator_state is None:
+        diagnostics.append("missing evaluator state directory")
+    diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))
     if expect.get("_apply_patch"):
         diagnostics.extend(_check_authorized_patch(root, ROOT / "evals" / "fixtures" / case["fixture"], expect["_apply_patch"]))
     diagnostics = sorted(dict.fromkeys(diagnostics))
     if not diagnostics and expect.get("_checkpoint"):
-        _save_checkpoint(root, case, expect["_phase_name"], manifest)
+        assert evaluator_state is not None
+        _save_checkpoint(evaluator_state, case, expect["_phase_name"], manifest)
     return diagnostics
 
 
@@ -312,6 +346,7 @@ def main() -> int:
     parser.add_argument("case_json", type=Path)
     parser.add_argument("workspace", type=Path)
     parser.add_argument("--phase")
+    parser.add_argument("--state-dir", type=Path, help="evaluator-owned directory outside the workspace")
     args = parser.parse_args()
     case, errors = _read_json(args.case_json, "case")
     if errors:
@@ -320,7 +355,7 @@ def main() -> int:
     assert case is not None
     try:
         with running_setup(case, args.workspace):
-            diagnostics = evaluate(args.case_json, args.workspace, args.phase)
+            diagnostics = evaluate(args.case_json, args.workspace, args.phase, args.state_dir)
     except RuntimeError as error:
         print(str(error))
         return 1
