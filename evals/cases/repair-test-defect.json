@@ -10,6 +10,7 @@
     "journey_traceability": ["journey-checkout"],
     "required_evidence_ids": ["evidence-repair", "evidence-reverification"],
     "unchanged_globs": ["package.json", "playwright.config.ts", "src/**"],
-    "present_globs": ["tests/checkout.spec.ts"]
+    "changed_globs": ["tests/checkout.spec.ts"],
+    "expected_file_hashes": {"tests/checkout.spec.ts": "b574eebfea9a6d25f95c581a426f2fc11664a21ef68130227f9cfe1c1b821ac3"}
   }
 }

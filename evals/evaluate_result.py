@@ -8,8 +8,10 @@ import hashlib
 import importlib.util
 import json
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from contextlib import contextmanager
@@ -83,6 +85,13 @@ def _phase_expectation(case: dict[str, Any], phase: str | None) -> tuple[dict[st
         if item.get("name") == phase:
             expect = dict(case["expect"])
             expect.update(item.get("expect", {}))
+            expect["_phase_name"] = phase
+            if "checkpoint" in item:
+                expect["_checkpoint"] = item["checkpoint"]
+            if "resume_from" in item:
+                expect["_resume_from"] = item["resume_from"]
+            if "apply_patch" in item:
+                expect["_apply_patch"] = item["apply_patch"]
             return expect, []
     return {}, [f"unknown phase: {phase}"]
 
@@ -172,7 +181,86 @@ def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list
     for pattern in expect.get("present_globs", []):
         if not any(_matches(name, pattern) for name in names):
             diagnostics.append(f"required path missing: {pattern}")
+    for pattern in expect.get("created_globs", []):
+        if not any(_matches(name, pattern) and name not in baseline for name in names):
+            diagnostics.append(f"required new path missing: {pattern}")
+    for pattern in expect.get("changed_globs", []):
+        matches = [relative for relative in baseline if _matches(relative, pattern)]
+        if not any(
+            (workspace / relative).is_file() and _sha256(workspace / relative) != baseline[relative]
+            for relative in matches
+        ):
+            diagnostics.append(f"required change missing: {pattern}")
+    for relative, expected_hash in expect.get("expected_file_hashes", {}).items():
+        actual = workspace / relative
+        if not actual.is_file() or _sha256(actual) != expected_hash:
+            diagnostics.append(f"unexpected repaired content: {relative}")
     return diagnostics
+
+
+def _checkpoint_path(workspace: Path, case_id: str, phase: str) -> Path:
+    return workspace / ".e2e" / f".eval-checkpoint-{case_id}-{phase}.json"
+
+
+def _check_continuity(workspace: Path, case: dict[str, Any], manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+    previous_phase = expect.get("_resume_from")
+    if not previous_phase:
+        return []
+    checkpoint, errors = _read_json(_checkpoint_path(workspace, case["id"], previous_phase), "phase checkpoint")
+    if errors:
+        return [f"missing phase checkpoint: {previous_phase}"]
+    assert checkpoint is not None
+    diagnostics: list[str] = []
+    if manifest.get("run_id") != checkpoint.get("run_id"):
+        diagnostics.append(
+            f"run continuity: expected {checkpoint.get('run_id')}, found {manifest.get('run_id')}"
+        )
+    if not isinstance(manifest.get("revision"), int) or manifest["revision"] <= checkpoint.get("revision", -1):
+        diagnostics.append(
+            f"revision continuity: expected > {checkpoint.get('revision')}, found {manifest.get('revision')}"
+        )
+    handoffs = _ids(manifest.get("handoffs"))
+    for handoff_id in checkpoint.get("handoff_ids", []):
+        if handoff_id not in handoffs:
+            diagnostics.append(f"handoff continuity: missing {handoff_id}")
+    return diagnostics
+
+
+def _check_authorized_patch(workspace: Path, fixture: Path, patch_reference: str) -> list[str]:
+    patch = ROOT / patch_reference
+    if not patch.is_file():
+        return [f"missing authorized patch: {patch_reference}"]
+    with tempfile.TemporaryDirectory() as directory:
+        expected_root = Path(directory) / "expected"
+        shutil.copytree(fixture, expected_root)
+        result = subprocess.run(
+            ["git", "apply", str(patch)], cwd=expected_root, text=True, capture_output=True, check=False,
+        )
+        if result.returncode:
+            return [f"invalid authorized patch: {patch_reference}"]
+        changed = [
+            path.relative_to(fixture).as_posix()
+            for path in fixture.rglob("*")
+            if path.is_file() and path.name != ".fixture-baseline.json"
+            and (expected_root / path.relative_to(fixture)).read_bytes() != path.read_bytes()
+        ]
+        diagnostics: list[str] = []
+        for relative in sorted(changed):
+            expected = expected_root / relative
+            actual = workspace / relative
+            if not actual.is_file() or actual.read_bytes() != expected.read_bytes():
+                diagnostics.append(f"authorized patch not applied: {relative}")
+        return diagnostics
+
+
+def _save_checkpoint(workspace: Path, case: dict[str, Any], phase: str, manifest: dict[str, Any]) -> None:
+    path = _checkpoint_path(workspace, case["id"], phase)
+    checkpoint = {
+        "run_id": manifest["run_id"],
+        "revision": manifest["revision"],
+        "handoff_ids": sorted(_ids(manifest.get("handoffs"))),
+    }
+    path.write_text(json.dumps(checkpoint, sort_keys=True), encoding="utf-8")
 
 
 def evaluate(case_path: str | Path, workspace: str | Path, phase: str | None = None) -> list[str]:
@@ -196,8 +284,7 @@ def evaluate(case_path: str | Path, workspace: str | Path, phase: str | None = N
     manifest, manifest_errors = _read_json(manifest_path, "manifest")
     expected_status = expect.get("manifest_status")
     if manifest_errors:
-        if expected_status != "unsupported-framework":
-            diagnostics.extend(manifest_errors)
+        diagnostics.extend(manifest_errors)
         return sorted(dict.fromkeys(diagnostics))
     assert manifest is not None
 
@@ -211,7 +298,13 @@ def evaluate(case_path: str | Path, workspace: str | Path, phase: str | None = N
         )
     diagnostics.extend(_check_required_ids(manifest, expect))
     diagnostics.extend(_check_traceability(manifest, expect))
-    return sorted(dict.fromkeys(diagnostics))
+    diagnostics.extend(_check_continuity(root, case, manifest, expect))
+    if expect.get("_apply_patch"):
+        diagnostics.extend(_check_authorized_patch(root, ROOT / "evals" / "fixtures" / case["fixture"], expect["_apply_patch"]))
+    diagnostics = sorted(dict.fromkeys(diagnostics))
+    if not diagnostics and expect.get("_checkpoint"):
+        _save_checkpoint(root, case, expect["_phase_name"], manifest)
+    return diagnostics
 
 
 def main() -> int:

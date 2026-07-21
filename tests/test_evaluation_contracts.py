@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,33 +112,164 @@ class EvaluatorTests(unittest.TestCase):
         generated.write_text("// generated checkout coverage\n")
         self.assertEqual(evaluate(self.case, self.workspace), [])
 
-    def test_unsupported_case_accepts_no_manifest_but_rejects_generated_playwright_test(self):
+    def test_unsupported_case_requires_a_valid_protocol_manifest(self):
         workspace = Path(self.tmp.name) / "cypress"
         shutil.copytree(FIXTURES / "unsupported-cypress", workspace)
         case = CASES / "unsupported-cypress.json"
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(_manifest(workspace, "unsupported-framework")))
         self.assertEqual(evaluate(case, workspace), [])
-        generated = workspace / "tests" / "login.spec.ts"
-        generated.parent.mkdir()
-        generated.write_text("// forbidden framework output\n")
-        self.assertIn("forbidden path present: tests/login.spec.ts", evaluate(case, workspace))
+        (target / "manifest.json").unlink()
+        self.assertIn("missing manifest: manifest.json", evaluate(case, workspace))
+        (target / "manifest.json").write_text("{}")
+        self.assertTrue(any(item.startswith("invalid manifest:") for item in evaluate(case, workspace)))
+
+    def test_existing_playwright_requires_a_new_checkout_artifact(self):
+        workspace = Path(self.tmp.name) / "existing"
+        shutil.copytree(FIXTURES / "existing-playwright", workspace)
+        manifest = _manifest(workspace)
+        manifest["evidence"] = [{"id": "evidence-existing-suite"}]
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "required new path missing: tests/checkout.generated.spec.ts",
+            evaluate(CASES / "existing-playwright.json", workspace),
+        )
+        (workspace / "tests" / "checkout.generated.spec.ts").write_text("// newly generated checkout coverage\n")
+        self.assertEqual(evaluate(CASES / "existing-playwright.json", workspace), [])
+
+    def test_repair_case_requires_the_precise_stale_locator_repair(self):
+        workspace = Path(self.tmp.name) / "repair-contract"
+        shutil.copytree(FIXTURES / "repairable-test-defect", workspace)
+        manifest = _manifest(workspace, "verified")
+        manifest["evidence"] = [{"id": "evidence-repair"}, {"id": "evidence-reverification"}]
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "required change missing: tests/checkout.spec.ts",
+            evaluate(CASES / "repair-test-defect.json", workspace),
+        )
+        repaired = workspace / "tests" / "checkout.spec.ts"
+        repaired.write_text(repaired.read_text().replace("Submit now", "Place order"))
+        self.assertEqual(evaluate(CASES / "repair-test-defect.json", workspace), [])
 
     def test_product_defect_resume_allows_only_the_authorized_source_patch(self):
         workspace = Path(self.tmp.name) / "product"
         shutil.copytree(FIXTURES / "product-defect", workspace)
-        (workspace / "src" / "checkout.js").write_text(
-            'export function submitOrder() { return { ok: true, message: "Order confirmed" }; }\n'
-        )
-        manifest = _manifest(workspace, status="verified")
+        manifest = _manifest(workspace, status="handoff-required")
+        manifest["run_id"] = "run-product-defect"
+        manifest["revision"] = 7
         manifest["evidence"] = [
-            {"id": "evidence-product-defect"}, {"id": "evidence-reverification"},
+            {"id": "evidence-product-defect"},
         ]
-        manifest["handoffs"] = [{"id": "handoff-product-defect"}]
+        manifest["handoffs"] = [{"id": "handoff-product-defect", "owner": "product-team"}]
         target = workspace / ".e2e"
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertEqual(
+            evaluate(CASES / "product-defect-handoff.json", workspace, phase="handoff"), [],
+        )
+        self.assertTrue((target / ".eval-checkpoint-product-defect-handoff-handoff.json").is_file())
+        subprocess.run(
+            ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],
+            cwd=workspace, check=True,
+        )
+        manifest["status"] = "verified"
+        manifest["revision"] = 8
+        manifest["evidence"].append({"id": "evidence-reverification"})
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertEqual(
             evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume"), [],
         )
+
+    def test_product_defect_resume_rejects_a_fresh_run_without_handoff_checkpoint(self):
+        workspace = Path(self.tmp.name) / "fresh-product"
+        shutil.copytree(FIXTURES / "product-defect", workspace)
+        subprocess.run(
+            ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],
+            cwd=workspace, check=True,
+        )
+        manifest = _manifest(workspace, status="verified")
+        manifest["run_id"] = "run-fresh-product"
+        manifest["revision"] = 8
+        manifest["evidence"] = [
+            {"id": "evidence-product-defect"}, {"id": "evidence-reverification"},
+        ]
+        manifest["handoffs"] = [{"id": "handoff-product-defect", "owner": "product-team"}]
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "missing phase checkpoint: handoff",
+            evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume"),
+        )
+
+    def test_product_defect_resume_rejects_an_unapplied_declared_patch(self):
+        workspace = Path(self.tmp.name) / "unpatched-product"
+        shutil.copytree(FIXTURES / "product-defect", workspace)
+        manifest = _manifest(workspace, status="handoff-required")
+        manifest["run_id"] = "run-unpatched-product"
+        manifest["revision"] = 7
+        manifest["evidence"] = [{"id": "evidence-product-defect"}]
+        manifest["handoffs"] = [{"id": "handoff-product-defect"}]
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff"), [])
+        manifest["status"] = "verified"
+        manifest["revision"] = 8
+        manifest["evidence"].append({"id": "evidence-reverification"})
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "authorized patch not applied: src/checkout.js",
+            evaluate(CASES / "product-defect-handoff.json", workspace, "resume"),
+        )
+
+    def test_product_defect_resume_rejects_a_discontinuous_run_id(self):
+        workspace = Path(self.tmp.name) / "discontinuous-product"
+        shutil.copytree(FIXTURES / "product-defect", workspace)
+        manifest = _manifest(workspace, status="handoff-required")
+        manifest["run_id"] = "run-original-product"
+        manifest["revision"] = 7
+        manifest["evidence"] = [{"id": "evidence-product-defect"}]
+        manifest["handoffs"] = [{"id": "handoff-product-defect"}]
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff"), [])
+        subprocess.run(
+            ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],
+            cwd=workspace, check=True,
+        )
+        manifest["status"] = "verified"
+        manifest["run_id"] = "run-restarted-product"
+        manifest["revision"] = 8
+        manifest["evidence"].append({"id": "evidence-reverification"})
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "run continuity: expected run-original-product, found run-restarted-product",
+            evaluate(CASES / "product-defect-handoff.json", workspace, "resume"),
+        )
+
+    def test_runnable_defect_fixtures_expose_the_repair_outcomes(self):
+        repair = Path(self.tmp.name) / "repair"
+        product = Path(self.tmp.name) / "product-runnable"
+        shutil.copytree(FIXTURES / "repairable-test-defect", repair)
+        shutil.copytree(FIXTURES / "product-defect", product)
+        self.assertNotEqual(subprocess.run(["node", "--test"], cwd=repair, capture_output=True).returncode, 0)
+        self.assertNotEqual(subprocess.run(["node", "--test"], cwd=product, capture_output=True).returncode, 0)
+        (repair / "tests" / "checkout.logic.test.js").write_text(
+            (repair / "tests" / "checkout.logic.test.js").read_text().replace("Submit now", "Place order")
+        )
+        subprocess.run(
+            ["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")],
+            cwd=product, check=True,
+        )
+        self.assertEqual(subprocess.run(["node", "--test"], cwd=repair, capture_output=True).returncode, 0)
+        self.assertEqual(subprocess.run(["node", "--test"], cwd=product, capture_output=True).returncode, 0)
 
 
 if __name__ == "__main__":
