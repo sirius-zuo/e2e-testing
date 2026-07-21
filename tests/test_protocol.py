@@ -67,6 +67,28 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(any("duplicate" in error for error in errors))
         self.assertTrue(any("secret value" in error for error in errors))
 
+    def test_raw_secret_key_variants_are_rejected_in_extension_fields(self):
+        for key in (
+            "access_token", "refresh_token", "client_secret", "private_key", "credentials", "db_passphrase",
+            "accessToken", "clientSecret", "privateKey",
+        ):
+            with self.subTest(key=key):
+                manifest = new_manifest("/workspace/app")
+                manifest["project"]["provider_config"] = {key: "raw-value"}
+                self.assertTrue(
+                    any(f"secret value key is forbidden: {key}" == error for error in validate_manifest(manifest))
+                )
+
+    def test_secret_reference_keys_are_allowed_in_extension_fields(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["project"]["provider_config"] = {
+            "credentials_ref": "vault://credentials",
+            "token_ref": "vault://token",
+            "secret_ref": "vault://secret",
+            "provider_credential_id": "credential-123",
+        }
+        self.assertEqual(validate_manifest(manifest), [])
+
     def test_multiple_next_actions_remain_ordered(self):
         manifest = new_manifest("/workspace/app")
         manifest["journeys"] = [

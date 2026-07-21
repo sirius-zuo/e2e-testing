@@ -42,7 +42,10 @@ TRANSITIONS = {
 MODES = {"plan", "generate", "verify", "repair"}
 AUTONOMY_MODES = {"explicit", "auto"}
 TARGET_TIERS = {"local", "ephemeral", "staging", "production", "unspecified"}
-FORBIDDEN_SECRET_KEYS = {"password", "token", "api_key", "secret", "secret_value"}
+REFERENCE_KEY_SUFFIXES = ("_ref", "_reference", "_id", "_identifier")
+RAW_SECRET_KEY_SUFFIX = re.compile(
+    r"(?:^|_)(?:password|passphrase|token|secret(?:_value)?|api_key|private_key|credentials?)$"
+)
 ID_COLLECTIONS = (
     "journeys", "tests", "evidence", "conflicts", "attempt_history",
     "handoffs", "authorizations", "next_actions",
@@ -243,7 +246,8 @@ def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
 def _find_secret_keys(value: Any, errors: list[str]) -> None:
     if isinstance(value, dict):
         for key, nested in value.items():
-            if key.lower() in FORBIDDEN_SECRET_KEYS:
+            normalized_key = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key).lower()
+            if not normalized_key.endswith(REFERENCE_KEY_SUFFIXES) and RAW_SECRET_KEY_SUFFIX.search(normalized_key):
                 errors.append(f"secret value key is forbidden: {key}")
             _find_secret_keys(nested, errors)
     elif isinstance(value, list):
