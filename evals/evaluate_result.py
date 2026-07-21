@@ -38,6 +38,11 @@ def _load_validator():
 VALIDATE_MANIFEST = _load_validator()
 
 
+def _spawn_setup(command: str, workspace: Path) -> subprocess.Popen:
+    """Launch fixture setup separately so host-process mocks do not affect it."""
+    return subprocess.Popen(shlex.split(command), cwd=workspace)
+
+
 @contextmanager
 def running_setup(case: dict[str, Any], workspace: Path):
     """Run a fixture's optional local server and always terminate it."""
@@ -46,7 +51,7 @@ def running_setup(case: dict[str, Any], workspace: Path):
         yield
         return
     command = setup["command"]
-    process = subprocess.Popen(shlex.split(command), cwd=workspace)
+    process = _spawn_setup(command, workspace)
     deadline = time.monotonic() + setup["timeout_seconds"]
     try:
         while True:
@@ -60,12 +65,26 @@ def running_setup(case: dict[str, Any], workspace: Path):
                 time.sleep(0.05)
         yield
     finally:
-        process.terminate()
         try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=2)
+            process.terminate()
+        except OSError:
+            pass
+        else:
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                else:
+                    try:
+                        process.wait(timeout=2)
+                    except (OSError, subprocess.TimeoutExpired):
+                        # Cleanup must not mask a host timeout or evaluator error.
+                        pass
+            except OSError:
+                pass
 
 
 def _read_json(path: Path, label: str) -> tuple[dict[str, Any] | None, list[str]]:

@@ -201,6 +201,29 @@ def _popen_kwargs(workspace: Path) -> dict[str, Any]:
     return kwargs
 
 
+def _spawn_host(command: list[str], workspace: Path) -> subprocess.Popen[str]:
+    """Launch only the model host; tests can replace this without affecting Git."""
+    return subprocess.Popen(command, **_popen_kwargs(workspace))
+
+
+def _taskkill_tree(pid: int, *, force: bool) -> None:
+    command = ["taskkill", "/PID", str(pid), "/T"]
+    if force:
+        command.append("/F")
+    try:
+        subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            shell=False,
+            timeout=TERMINATE_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        # A subsequent forced taskkill or the host timeout still bounds cleanup.
+        pass
+
+
 def _signal_process_tree(process: subprocess.Popen[str], signal_number: int, fallback: str) -> None:
     if os.name == "posix" and process.pid is not None:
         try:
@@ -208,6 +231,9 @@ def _signal_process_tree(process: subprocess.Popen[str], signal_number: int, fal
             return
         except ProcessLookupError:
             return
+    if os.name == "nt" and process.pid is not None:
+        _taskkill_tree(process.pid, force=signal_number == signal.SIGKILL)
+        return
     getattr(process, fallback)()
 
 
@@ -219,10 +245,13 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
         _signal_process_tree(process, signal.SIGKILL, "kill")
         try:
             process.wait(timeout=TERMINATE_TIMEOUT)
-        except subprocess.TimeoutExpired:
+        except (OSError, subprocess.TimeoutExpired):
             # The kill signal has been sent; do not let an unresponsive child
             # extend or mask the host invocation's configured timeout.
             pass
+    except OSError:
+        # A child may already have been reaped; preserve the caller's timeout.
+        pass
 
 
 def _as_text(value: str | bytes | None) -> str:
@@ -231,8 +260,19 @@ def _as_text(value: str | bytes | None) -> str:
     return value or ""
 
 
+def _combine_output(*values: str | bytes | None) -> str:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for line in _as_text(value).splitlines():
+            if line and line not in seen:
+                seen.add(line)
+                lines.append(line)
+    return "\n".join(lines)
+
+
 def _run_host(command: list[str], workspace: Path, prompt: str, timeout: float) -> tuple[str, str]:
-    process: subprocess.Popen[str] = subprocess.Popen(command, **_popen_kwargs(workspace))
+    process = _spawn_host(command, workspace)
     try:
         stdout, stderr = process.communicate(input=prompt, timeout=timeout)
     except subprocess.TimeoutExpired as error:
@@ -245,8 +285,8 @@ def _run_host(command: list[str], workspace: Path, prompt: str, timeout: float) 
             drained_stdout, drained_stderr = "", ""
         raise HostTimeoutError(
             timeout,
-            partial_stdout or _as_text(drained_stdout),
-            partial_stderr or _as_text(drained_stderr),
+            _combine_output(partial_stdout, drained_stdout),
+            _combine_output(partial_stderr, drained_stderr),
         ) from error
     return _as_text(stdout), _as_text(stderr)
 

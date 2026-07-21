@@ -329,7 +329,7 @@ class HostHarnessTests(unittest.TestCase):
             mock.patch.object(run_host_eval, "RESULTS", self.results),
             mock.patch("evals.run_host_eval.shutil.which", return_value=f"/usr/bin/{host}"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
-            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process) as popen,
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process) as popen,
             mock.patch("evals.run_host_eval.evaluate", return_value=diagnostics or []) as evaluator,
         ):
             status = run_host_eval.run_case(host, case, keep_results=keep_results, host_timeout=timeout)
@@ -338,7 +338,7 @@ class HostHarnessTests(unittest.TestCase):
     def test_refuses_a_missing_host_executable_before_creating_a_process(self):
         with (
             mock.patch("evals.run_host_eval.shutil.which", return_value=None),
-            mock.patch("evals.run_host_eval.subprocess.Popen") as popen,
+            mock.patch("evals.run_host_eval._spawn_host") as popen,
         ):
             with self.assertRaisesRegex(run_host_eval.HostUnavailableError, "codex executable"):
                 run_host_eval.run_case("codex", "greenfield-source")
@@ -374,8 +374,8 @@ class HostHarnessTests(unittest.TestCase):
     def test_each_run_uses_a_fresh_fixture_copy_and_never_the_source_fixture(self):
         _, first, _, _ = self._run(keep_results=True)
         _, second, _, _ = self._run(keep_results=True)
-        first_workspace = Path(first.call_args.kwargs["cwd"])
-        second_workspace = Path(second.call_args.kwargs["cwd"])
+        first_workspace = Path(first.call_args.args[1])
+        second_workspace = Path(second.call_args.args[1])
         self.assertNotEqual(first_workspace, second_workspace)
         self.assertNotEqual(first_workspace, FIXTURES / "greenfield-source")
         self.assertNotEqual(second_workspace, FIXTURES / "greenfield-source")
@@ -398,7 +398,7 @@ class HostHarnessTests(unittest.TestCase):
         with (
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
-            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", return_value=[]),
             mock.patch("evals.run_host_eval.running_setup", side_effect=setup),
         ):
@@ -422,7 +422,7 @@ class HostHarnessTests(unittest.TestCase):
         with (
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
-            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", side_effect=evaluator),
             mock.patch("evals.run_host_eval._apply_declared_patch", side_effect=patch),
         ):
@@ -458,7 +458,7 @@ class HostHarnessTests(unittest.TestCase):
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.tempfile.TemporaryDirectory", return_value=temporary_directory),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
-            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", return_value=[]),
         ):
             self.assertEqual(run_host_eval.run_case("codex", "greenfield-source"), 0)
@@ -473,7 +473,7 @@ class HostHarnessTests(unittest.TestCase):
             mock.patch.object(run_host_eval, "RESULTS", self.results),
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
-            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", return_value=[]),
             mock.patch("evals.run_host_eval._apply_declared_patch", side_effect=RuntimeError("patch failed")),
         ):
@@ -485,7 +485,7 @@ class HostHarnessTests(unittest.TestCase):
     def test_executes_outside_the_repository_then_copies_results_afterward(self):
         status, popen, _, _ = self._run(keep_results=True)
         self.assertEqual(status, 0)
-        execution_workspace = Path(popen.call_args.kwargs["cwd"]).resolve()
+        execution_workspace = Path(popen.call_args.args[1]).resolve()
         self.assertFalse(execution_workspace.is_relative_to(ROOT.resolve()))
         retained = next((self.results / "codex" / "greenfield-source").glob("*/workspace"))
         self.assertTrue((retained / "package.json").is_file())
@@ -517,7 +517,7 @@ class HostHarnessTests(unittest.TestCase):
             mock.patch.object(run_host_eval, "RESULTS", self.results),
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
-            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
             mock.patch("evals.run_host_eval.os.killpg") as killpg,
             mock.patch("evals.run_host_eval.evaluate", return_value=[]),
         ):
@@ -538,6 +538,106 @@ class HostHarnessTests(unittest.TestCase):
             run_host_eval._terminate_process_tree(process)
         self.assertEqual(killpg.call_count, 2)
 
+    def test_process_tree_cleanup_does_not_mask_timeout_with_a_wait_os_error(self):
+        process = mock.Mock(pid=4321)
+        process.wait.side_effect = OSError("already reaped")
+        with mock.patch("evals.run_host_eval.os.killpg"):
+            run_host_eval._terminate_process_tree(process)
+
+    def test_windows_process_tree_cleanup_uses_taskkill_tree_then_forced_escalation(self):
+        process = mock.Mock(pid=4321)
+        process.wait.side_effect = [subprocess.TimeoutExpired("codex", 2), None]
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with (
+            mock.patch.object(run_host_eval.os, "name", "nt"),
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed) as run,
+        ):
+            run_host_eval._terminate_process_tree(process)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["taskkill", "/PID", "4321", "/T"], ["taskkill", "/PID", "4321", "/T", "/F"]],
+        )
+        self.assertTrue(all(call.kwargs["shell"] is False for call in run.call_args_list))
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+
+    def test_timeout_concatenates_distinct_partial_and_drained_output(self):
+        timeout = subprocess.TimeoutExpired("codex", 3, output="partial stdout", stderr="partial stderr")
+        process = mock.Mock(pid=4321)
+        process.communicate.side_effect = [timeout, ("drained stdout", "drained stderr")]
+        process.wait.return_value = None
+        with (
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
+            mock.patch("evals.run_host_eval.os.killpg"),
+        ):
+            with self.assertRaises(run_host_eval.HostTimeoutError) as raised:
+                run_host_eval._run_host(["codex"], Path(self.tmp.name), "prompt", 3)
+        self.assertEqual(raised.exception.stdout, "partial stdout\ndrained stdout")
+        self.assertEqual(raised.exception.stderr, "partial stderr\ndrained stderr")
+
+    def test_real_git_boundary_is_external_and_retention_runs_after_evaluation(self):
+        process = mock.Mock(pid=4321, returncode=0)
+        events: list[str] = []
+
+        def communicate(*, input, timeout):
+            events.append("host")
+            return "host prose", ""
+
+        process.communicate.side_effect = communicate
+        original_retain = run_host_eval._retain_artifacts
+
+        def retain(source, host, case_id):
+            events.append("retain")
+            self.assertEqual(events[:2], ["host", "evaluate"])
+            return original_retain(source, host, case_id)
+
+        def launch(command, workspace):
+            workspace = Path(workspace)
+            top = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"], cwd=workspace, text=True, capture_output=True, check=True,
+            ).stdout.strip()
+            self.assertEqual(Path(top).resolve(), workspace.resolve())
+            self.assertFalse(Path(top).resolve().is_relative_to(ROOT.resolve()))
+            return process
+
+        def evaluator(*_args):
+            events.append("evaluate")
+            return []
+
+        with (
+            mock.patch.object(run_host_eval, "RESULTS", self.results),
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval._spawn_host", side_effect=launch),
+            mock.patch("evals.run_host_eval.evaluate", side_effect=evaluator),
+            mock.patch("evals.run_host_eval._retain_artifacts", side_effect=retain),
+        ):
+            self.assertEqual(run_host_eval.run_case("codex", "greenfield-source", keep_results=True), 0)
+        self.assertEqual(events, ["host", "evaluate", "retain"])
+        retained = next((self.results / "codex" / "greenfield-source").glob("*/workspace"))
+        self.assertTrue((retained / ".git").is_dir())
+
+    def test_host_timeout_survives_a_second_setup_kill_wait_timeout(self):
+        case = json.loads((CASES / "live-assisted-generation.json").read_text())
+        host_timeout = subprocess.TimeoutExpired("codex", 1, output="partial", stderr="")
+        host = mock.Mock(pid=4321)
+        host.communicate.side_effect = [host_timeout, ("", "")]
+        host.wait.return_value = None
+        setup = mock.Mock()
+        setup.wait.side_effect = [subprocess.TimeoutExpired("setup", 2), subprocess.TimeoutExpired("setup", 2)]
+        response = mock.MagicMock(status=200)
+        response.__enter__.return_value = response
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=host),
+            mock.patch("evals.run_host_eval.os.killpg"),
+            mock.patch("evals.evaluate_result._spawn_setup", return_value=setup),
+            mock.patch("evals.evaluate_result.urllib.request.urlopen", return_value=response),
+        ):
+            with self.assertRaises(run_host_eval.HostTimeoutError):
+                run_host_eval.run_case("codex", case["id"], host_timeout=1)
+        setup.terminate.assert_called_once()
+        setup.kill.assert_called_once()
+
 
 class SetupLifecycleTests(unittest.TestCase):
     def test_polls_declared_ready_url_and_kills_setup_after_termination_timeout(self):
@@ -547,7 +647,7 @@ class SetupLifecycleTests(unittest.TestCase):
         response = mock.MagicMock(status=200)
         response.__enter__.return_value = response
         with (
-            mock.patch("evals.evaluate_result.subprocess.Popen", return_value=process),
+            mock.patch("evals.evaluate_result._spawn_setup", return_value=process),
             mock.patch("evals.evaluate_result.urllib.request.urlopen", side_effect=[OSError("not ready"), response]) as urlopen,
             mock.patch("evals.evaluate_result.time.sleep"),
         ):
