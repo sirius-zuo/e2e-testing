@@ -246,13 +246,21 @@ def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
 def _find_secret_keys(value: Any, errors: list[str]) -> None:
     if isinstance(value, dict):
         for key, nested in value.items():
-            normalized_key = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key).lower()
+            normalized_key = _normalize_key(key)
             if not normalized_key.endswith(REFERENCE_KEY_SUFFIXES) and RAW_SECRET_KEY_SUFFIX.search(normalized_key):
                 errors.append(f"secret value key is forbidden: {key}")
             _find_secret_keys(nested, errors)
     elif isinstance(value, list):
         for nested in value:
             _find_secret_keys(nested, errors)
+
+
+def _normalize_key(key: str) -> str:
+    """Normalize key separators and word boundaries for secret-key matching."""
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", key)
+    normalized = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", normalized)
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", normalized)
+    return normalized.lower().strip("_")
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:
