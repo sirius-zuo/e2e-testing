@@ -1,0 +1,140 @@
+# Orchestrator workflow
+
+## Contents
+
+- [Purpose](#purpose)
+- [Discovery inventory](#discovery-inventory)
+- [Journey planning](#journey-planning)
+- [Routing](#routing)
+- [Actions and handoffs](#actions-and-handoffs)
+- [Resume](#resume)
+
+## Purpose
+
+This workflow turns repository evidence into a portable journey plan. It does
+not select implementation APIs, generate framework code, or claim browser
+verification. Those decisions belong to the routed adapter or capability.
+
+Start with the requested mode and the project root. Read repository-level
+instructions before inspecting application source, package metadata, tests, or
+targets. Before reading, validating, or initializing a manifest, perform a
+read-only browser-framework discovery from package metadata, lockfiles, browser
+test scripts, configuration, existing specs, fixtures, and CI commands. If any
+alternate browser E2E framework is detected, including alongside Playwright,
+persist a valid `unsupported-framework` manifest/outcome with the detected
+framework and source locations. Detection itself is read-only: do not add or
+change Playwright dependencies, configuration, tests, evidence, or other test
+infrastructure. The sole write permitted for that outcome is its durable
+manifest record. A manifest records all other work after this framework gate
+passes; then update it before a handoff and after receiving a handoff result.
+
+## Discovery inventory
+
+Record only evidence that can be traced to a source. The inventory should cover
+the following fields for every candidate journey.
+
+| Evidence area | Look for | Evidence label | Record in plan |
+| --- | --- | --- | --- |
+| Specifications | acceptance criteria, stories, design notes | `spec-derived` | source location and uncertainty |
+| Routes | navigation, handlers, public URLs, app entrypoints | `source-derived` | entry and endpoint |
+| Existing tests | unit, integration, browser suites, fixtures | `source-derived` | coverage, conventions, gaps |
+| Package setup | dependencies, scripts, lockfiles, CI config | `source-derived` | detected framework and commands |
+| Live target | approved deployment, visible flows, response behavior | `live-observed` | target tier, observation time |
+| Data model | test accounts, reset paths, mutable records | `source-derived` | setup and cleanup risks |
+| Authentication | supported test login path and roles | `source-derived` | role and secret reference only |
+
+Do not infer a live behavior merely because the source suggests it. Likewise,
+do not treat an observed deployment as proof of an uninspected branch. Preserve
+the distinction with `live-observed`, `source-derived`, and `spec-derived`.
+
+When sources disagree, capture each source and the affected journey. Assign
+`needs-clarification`, add a question to the plan, and keep working on journeys
+that do not depend on that answer.
+
+## Journey planning
+
+Use a stable identifier in the exact form `journey-<kebab-name>`. Derive the
+name from the user outcome rather than a route or test filename. For example,
+`journey-checkout-with-card` remains stable when the checkout URL changes.
+
+Each journey plan includes:
+
+- user goal and entry condition;
+- ordered observable checkpoints;
+- evidence sources and their labels;
+- required role, seed data, and cleanup needs;
+- risk fields: `risk_level`, `risk_reason`, `data_mutation`, `environment`,
+  `approval_required`, and `blocking_question` when applicable;
+- current status and the action that can advance it.
+
+Use a focused independent journey per meaningful user outcome. A broad flow can
+link to smaller journey IDs but must not hide their separate risks or status.
+When a checkpoint lacks evidence, make the uncertainty explicit instead of
+inventing a selector, an expected response, or a data value.
+
+## Routing
+
+Routing is framework-neutral. First determine whether a browser E2E framework
+is present from package setup, existing suite structure, and repository
+instructions. Do not alter dependencies, configuration, or test infrastructure
+as part of this decision.
+
+| Detected condition | Persisted action | Result |
+| --- | --- | --- |
+| Cypress, WebdriverIO, Selenium, or another framework is present, even with Playwright | `unsupported-framework` | persist the detected framework and read-only evidence only; do not mutate Playwright or test infrastructure |
+| Playwright is present with no alternate browser framework | `e2e-web-playwright` | hand off to the adapter |
+| No browser E2E framework is present | `e2e-web-playwright` | hand off to the adapter |
+| Framework evidence is ambiguous but does not establish an alternate framework | `needs-clarification` | ask without infrastructure change |
+
+Direct routing is appropriate when the host can invoke the named adapter.
+Automated routing is appropriate only when the host has an authorized capability
+for delegation. After the framework gate passes, persist the action first,
+including its inputs, manifest revision, target journey IDs, and expected resume
+condition. For an unsupported framework, persist the durable manifest outcome
+only after the read-only gate; it is not a license to bootstrap, migrate, or
+mutate test infrastructure.
+
+## Actions and handoffs
+
+`next_actions` is ordered. The first action is the default only when its
+preconditions are true. Independent actions may appear together so a capable
+host can execute them concurrently; their order still records deterministic
+resume behavior. Do not put mutually dependent actions in concurrent groups.
+
+Every action record includes an action identifier, kind, journey IDs, input
+summary, source manifest revision, owner or capability, status, and result or
+failure reference. Keep a capability handoff record for each delegated action:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | stable identifier for this delegation |
+| `capability` | adapter or host-supported capability requested |
+| `requested_at` | timestamp of the persisted request |
+| `manifest_revision` | revision consumed by the delegate |
+| `journey_ids` | immutable list of scoped journey IDs |
+| `reproduction_steps` | ordered steps that reproduce the selected failure |
+| `expected_behavior` | supported behavior the selected test expected |
+| `actual_behavior` | observed behavior from failed execution evidence |
+| `artifact_refs` | valid IDs for sanitized logs, traces, screenshots, or videos |
+| `evidence_ids` | valid manifest evidence IDs, including the failed run and classification |
+| `resume` | object containing the exact command for resumed verification |
+| `result` | returned status, artifacts, and new evidence |
+
+The handoff must never include plaintext secrets. It may contain approved
+secret-reference names and the minimum target context needed by the receiver.
+
+## Resume
+
+On resume, validate the manifest and inspect the most recent action and handoff
+records. Confirm the receiving capability used the recorded revision. If a
+result is stale, failed, incomplete, or cannot be tied to that revision, retain
+the record, mark its action accordingly, and create the appropriate next action
+instead of overwriting history.
+
+Apply returned evidence to only the scoped journey IDs. Re-evaluate their
+status, risks, and ordered `next_actions`. A successful adapter result can
+advance generated work, but it does not change `generated-unverified` to a
+verified status without the protocol conditions for verification.
+
+When no compatible capability can continue, provide the exact explicit mode,
+journey IDs, action kind, and manifest revision needed for the next invocation.

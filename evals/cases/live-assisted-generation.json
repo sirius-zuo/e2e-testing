@@ -1,0 +1,17 @@
+{
+  "id": "live-assisted-generation",
+  "entry_skill": "e2e-testing",
+  "mode": "generate",
+  "autonomy": {"mode": "explicit", "auto_repair": false},
+  "prompt": "Use the e2e-testing Agent Skill in generate mode to cover the checkout form. You may inspect the authorized local target and must record durable live-observed evidence.",
+  "fixture": "live-assisted-generation",
+  "setup": {"command": "python3 -m http.server 8765 --directory site", "ready_url": "http://127.0.0.1:8765/", "timeout_seconds": 5},
+  "expect": {
+    "manifest_status": "generated-unverified",
+    "required_journey_ids": ["journey-checkout"],
+    "journey_traceability": ["journey-checkout"],
+    "required_evidence_ids": ["evidence-live"],
+    "unchanged_globs": ["package.json", "src/**", "site/**"],
+    "present_globs": ["tests/**/*.spec.*"]
+  }
+}

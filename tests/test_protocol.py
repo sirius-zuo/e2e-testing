@@ -1,0 +1,247 @@
+import json
+import multiprocessing
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from protocol.v1.e2e_protocol import (
+    ProtocolError,
+    new_manifest,
+    save_manifest,
+    transition,
+    validate_manifest,
+)
+from protocol.v1.e2e_protocol import _manifest_lock
+
+
+PROTOCOL_SCRIPT = Path(__file__).parents[1] / "protocol" / "v1" / "e2e_protocol.py"
+
+
+def _transition_in_process(path, started, result):
+    started.put(None)
+    try:
+        result.put(("saved", transition(path, 1, "planned", [])))
+    except ProtocolError as error:
+        result.put(("error", str(error)))
+
+
+class ProtocolTests(unittest.TestCase):
+    def test_new_manifest_is_valid_and_defaults_to_generate(self):
+        manifest = new_manifest("/workspace/app")
+        self.assertEqual(manifest["protocol_version"], "1.0")
+        self.assertEqual(manifest["mode"], "generate")
+        self.assertEqual(manifest["autonomy"]["mode"], "explicit")
+        self.assertFalse(manifest["autonomy"]["auto_repair"])
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_auto_manifest_keeps_repair_opt_in_and_uses_a_bounded_usable_clock_budget(self):
+        manifest = new_manifest("/workspace/app", autonomy="auto")
+        self.assertEqual(manifest["autonomy"], {"mode": "auto", "auto_repair": False})
+        self.assertEqual(manifest["attempt_budget"]["wall_clock_seconds"], 300)
+
+    def test_cli_init_preserves_auto_repair_opt_in_and_clock_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            completed = subprocess.run(
+                [
+                    sys.executable, str(PROTOCOL_SCRIPT), "init", "--project-root", tmp,
+                    "--autonomy", "auto", "--output", str(Path(tmp) / "manifest.json"),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        created = json.loads(completed.stdout)
+        self.assertFalse(created["autonomy"]["auto_repair"])
+        self.assertEqual(created["attempt_budget"]["wall_clock_seconds"], 300)
+
+    def test_save_increments_revision_and_rejects_stale_writer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".e2e" / "manifest.json"
+            saved = save_manifest(path, new_manifest(tmp), expected_revision=None)
+            self.assertEqual(saved["revision"], 1)
+            saved = transition(path, 1, "planned", [])
+            self.assertEqual(saved["revision"], 2)
+            with self.assertRaisesRegex(ProtocolError, "revision conflict"):
+                transition(path, 1, "ready-for-adapter", [])
+
+    def test_invalid_transition_is_rejected_without_file_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            save_manifest(path, new_manifest(tmp), None)
+            before = path.read_text()
+            with self.assertRaisesRegex(ProtocolError, "invalid transition"):
+                transition(path, 1, "verified", [])
+            self.assertEqual(path.read_text(), before)
+
+    def test_duplicate_ids_and_secret_values_are_rejected(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["journeys"] = [
+            {"id": "journey-login", "status": "planned"},
+            {"id": "journey-login", "status": "planned"},
+        ]
+        manifest["target"]["password"] = "plaintext"
+        errors = validate_manifest(manifest)
+        self.assertTrue(any("duplicate" in error for error in errors))
+        self.assertTrue(any("secret value" in error for error in errors))
+
+    def test_raw_secret_key_variants_are_rejected_in_extension_fields(self):
+        for key in (
+            "access_token", "refresh_token", "client_secret", "private_key", "credentials", "db_passphrase",
+            "accessToken", "clientSecret", "privateKey",
+            "access-token", "APIKey", "client.secret", "DBPassword",
+            "APIKEY", "apikey", "PRIVATEKEY", "privatekey", "CLIENTSECRET", "clientsecret",
+            "ACCESSTOKEN", "accesstoken",
+        ):
+            with self.subTest(key=key):
+                manifest = new_manifest("/workspace/app")
+                manifest["project"]["provider_config"] = {key: "raw-value"}
+                self.assertTrue(
+                    any(f"secret value key is forbidden: {key}" == error for error in validate_manifest(manifest))
+                )
+
+    def test_secret_reference_keys_are_allowed_in_extension_fields(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["project"]["provider_config"] = {
+            "credentials_ref": "vault://credentials",
+            "token_ref": "vault://token",
+            "secret_ref": "vault://secret",
+            "provider_credential_id": "credential-123",
+            "access-token-ref": "vault://access-token",
+            "APIKeyReference": "vault://api-key",
+            "APIKEYREF": "vault://api-key",
+            "clientSecretReference": "vault://client-secret",
+            "access-token-id": "vault://access-token",
+            "providerCredentialIdentifier": "credential-123",
+        }
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_multiple_next_actions_remain_ordered(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["journeys"] = [
+            {"id": "j1", "status": "planned"},
+            {"id": "j2", "status": "planned"},
+        ]
+        manifest["next_actions"] = [
+            {"id": "action-auth", "capability": "provide-test-credentials", "journey_ids": ["j1"]},
+            {"id": "action-fix", "capability": "fix-product-defect", "journey_ids": ["j2"]},
+        ]
+        self.assertEqual(validate_manifest(manifest), [])
+        self.assertEqual(manifest["next_actions"][0]["id"], "action-auth")
+
+    def test_next_action_resume_requires_an_object(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["next_actions"] = [
+            {"id": "action-resume", "capability": "continue", "journey_ids": [], "resume": "later"},
+        ]
+        errors = validate_manifest(manifest)
+        self.assertTrue(any("resume" in error and "object" in error for error in errors))
+
+    def test_tests_and_actions_must_reference_registered_journeys(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["journeys"] = [{"id": "journey-login", "status": "planned"}]
+        manifest["tests"] = [{"id": "test-login", "journey_id": "journey-missing", "status": "generated"}]
+        manifest["next_actions"] = [
+            {"id": "action-login", "capability": "verify", "journey_ids": ["journey-missing"]},
+        ]
+        manifest["handoffs"] = [
+            {"id": "handoff-login", "journey_ids": ["journey-missing"]},
+        ]
+        errors = validate_manifest(manifest)
+        self.assertIn("tests[0].journey_id does not reference a registered journey: journey-missing", errors)
+        self.assertIn("next_actions[0].journey_ids contains an unknown journey: journey-missing", errors)
+        self.assertIn("handoffs[0].journey_ids contains an unknown journey: journey-missing", errors)
+
+    def test_wrong_collection_types_return_stable_errors_without_iteration_failures(self):
+        for collection in (
+            "journeys", "tests", "evidence", "conflicts", "attempt_history",
+            "handoffs", "authorizations", "next_actions",
+        ):
+            with self.subTest(collection=collection):
+                manifest = new_manifest("/workspace/app")
+                manifest[collection] = None
+                self.assertIn(f"{collection} must be an array", validate_manifest(manifest))
+
+    def test_product_handoff_refs_must_resolve_to_manifest_evidence_and_artifacts(self):
+        manifest = new_manifest("/workspace/app", mode="verify")
+        manifest["journeys"] = [{"id": "journey-checkout", "status": "failed"}]
+        manifest["evidence"] = [
+            {
+                "id": "evidence-run", "artifacts": [{"id": "artifact-log"}],
+            },
+            {
+                "id": "evidence-classification",
+                "classification": {"evidence_ids": ["evidence-missing"]},
+            },
+        ]
+        manifest["handoffs"] = [{
+            "id": "handoff-product", "journey_ids": ["journey-checkout"],
+            "evidence_ids": ["evidence-missing"], "artifact_refs": ["artifact-missing"],
+        }]
+        errors = validate_manifest(manifest)
+        self.assertIn(
+            "evidence[1].classification.evidence_ids contains an unknown evidence ID: evidence-missing",
+            errors,
+        )
+        self.assertIn("handoffs[0].evidence_ids contains an unknown evidence ID: evidence-missing", errors)
+        self.assertIn("handoffs[0].artifact_refs contains an unknown artifact ID: artifact-missing", errors)
+
+        manifest["evidence"][1]["classification"]["evidence_ids"] = [123]
+        manifest["handoffs"][0]["evidence_ids"] = [123]
+        manifest["handoffs"][0]["artifact_refs"] = [{}]
+        errors = validate_manifest(manifest)
+        self.assertIn("evidence[1].classification.evidence_ids must be an array of strings", errors)
+        self.assertIn("handoffs[0].evidence_ids must be an array of strings", errors)
+        self.assertIn("handoffs[0].artifact_refs must be an array of strings", errors)
+
+    def test_save_rejects_a_malformed_existing_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            path.write_text("{}")
+            with self.assertRaisesRegex(ProtocolError, "invalid input: existing manifest"):
+                save_manifest(path, new_manifest(tmp), expected_revision=None)
+
+    def test_cli_init_rejects_a_malformed_existing_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            path.write_text("{}")
+            completed = subprocess.run(
+                [sys.executable, str(PROTOCOL_SCRIPT), "init", "--project-root", tmp, "--output", str(path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertIn("invalid input: existing manifest", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+
+    def test_save_waits_for_another_writer_holding_the_manifest_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            save_manifest(path, new_manifest(tmp), None)
+            with _manifest_lock(path):
+                context = multiprocessing.get_context("spawn")
+                started = context.Queue()
+                result = context.Queue()
+                process = context.Process(
+                    target=_transition_in_process,
+                    args=(str(path), started, result),
+                )
+                process.start()
+                started.get(timeout=5)
+                time.sleep(0.2)
+                self.assertEqual(json.loads(path.read_text())["revision"], 1)
+
+            outcome, value = result.get(timeout=5)
+            process.join(timeout=5)
+            self.assertEqual(process.exitcode, 0)
+            self.assertEqual(outcome, "saved")
+            self.assertEqual(value["revision"], 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

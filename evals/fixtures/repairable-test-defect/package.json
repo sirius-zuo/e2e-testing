@@ -1,0 +1,1 @@
+{"name":"repairable-test-defect","private":true,"scripts":{"test":"node --test"},"devDependencies":{"@playwright/test":"1.0.0"}}

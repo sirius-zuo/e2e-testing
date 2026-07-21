@@ -1,0 +1,15 @@
+{
+  "id": "auto-budget",
+  "entry_skill": "e2e-testing",
+  "mode": "repair",
+  "autonomy": {"mode": "auto", "auto_repair": true},
+  "prompt": "Use the e2e-testing Agent Skill in auto repair mode. Make no more than the policy's one repair attempt, reverify, and stop durably when the budget is exhausted.",
+  "fixture": "auto-budget",
+  "expect": {
+    "manifest_status": "blocked",
+    "required_journey_ids": ["journey-checkout"],
+    "required_attempt_history_ids": ["attempt-repair-1"],
+    "required_evidence_ids": ["evidence-budget-exhausted"],
+    "unchanged_globs": ["package.json", "playwright.config.ts", ".e2e-policy.json", "tests/**"]
+  }
+}
