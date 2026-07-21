@@ -1,7 +1,7 @@
 # E2E Testing Agent Skills Design
 
 **Date:** 2026-07-20  
-**Status:** Design approved; written specification awaiting final user review  
+**Status:** Approved for implementation planning
 **Project:** `e2e-testing`
 
 ## 1. Purpose
