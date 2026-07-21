@@ -18,7 +18,8 @@ are recorded. Evidence gathering is not permission to operate an environment.
 
 Use the least privileged account, the smallest data set, and the narrowest
 allowed target. Maintain a clear link between each risky action, its journey,
-and the approval that authorizes it.
+and its recorded target configuration or approval. An approval never authorizes
+an action that this policy categorically prohibits.
 
 ## Environment tiers
 
@@ -26,13 +27,19 @@ and the approval that authorizes it.
 | --- | --- | --- | --- |
 | local | developer machine or disposable local service | allowed after repository instructions | use isolated data where possible |
 | test | dedicated test or CI environment | allowed with stated target | prefer resettable fixtures |
-| staging | pre-production shared environment | approval based on mutation risk | avoid shared destructive paths |
-| production | customer-facing live environment | observation only unless explicitly approved | minimize traffic and never guess approval |
+| staging | pre-production shared environment | only with an explicitly configured staging target | configuration is required even for read-only work |
+| production | customer-facing live environment | only under an explicit configured production allow-policy; non-destructive observation only | mutations and external effects are prohibited |
 | unknown | target cannot be classified | no interaction | request clarification first |
 
 A hostname, branch name, or visual similarity is insufficient to establish a
 tier. Record the evidence supporting the classification in the journey risk
 fields or handoff context.
+
+Any staging interaction, including read-only observation, requires an
+explicitly configured staging target. Target configuration establishes where the
+action may run; it is not approval for a mutation. Production interaction
+requires an explicit configured production allow-policy and is limited to
+non-destructive observation only.
 
 ## Risk gates
 
@@ -42,12 +49,19 @@ Classify each planned action before execution.
 | --- | --- | --- |
 | low | read-only navigation in local or test | record target and proceed |
 | medium | creating disposable test records, test login | confirm known cleanup path and target tier |
-| high | shared staging mutations, privileged roles, external side effects | explicit user or repository authorization |
-| critical | production mutation, payment, irreversible deletion, customer data | explicit written authorization for the exact action; otherwise stop |
+| medium | read-only staging observation | explicitly configured staging target |
+| high | staging mutation, destructive work, privileged role, external side effect | configured staging target plus additional approval for mutation or destructive work |
+| prohibited | production mutation, payment, irreversible deletion, or test-data mutation | categorically prohibited; do not perform |
 
 Approval is specific to the target, action, data class, and time window. Do not
 reuse a staging approval for production, or a read-only approval for a write.
-If an operation becomes riskier than planned, stop and request a new approval.
+For staging mutation or destructive work, an additional approval is required
+after the target has been explicitly configured. If an operation becomes
+riskier than planned, stop and request a new approval.
+
+Production mutation, payment, irreversible deletion, and test-data mutation
+are categorically prohibited. A one-off approval cannot override this
+prohibition, including an approval that otherwise names the exact action.
 
 For targets that expose multiple tiers through a shared control plane, verify
 the selected account and target label immediately before the action. A prior
@@ -72,11 +86,14 @@ or test tiers. Describe setup, expected mutation, cleanup, and verification in
 the journey record. Confirm cleanup succeeded before claiming a data-mutating
 journey is complete.
 
-Never use production customer data as test fixture material. Avoid destructive
-queries, irreversible deletes, mass updates, billing events, email campaigns,
-or third-party side effects unless an explicit approved procedure covers the
-exact action. A simulation or sandbox is not automatically safe; classify it by
-the actual external effect.
+Never use production customer data as test fixture material. Production
+mutation, payment, irreversible deletion, and test-data mutation are
+categorically prohibited; a one-off approval cannot override this rule. In
+staging, avoid destructive queries, mass updates, billing events, email
+campaigns, or third-party side effects unless the target is explicitly
+configured and the additional approval for mutation or destructive work covers
+the exact action. A simulation or sandbox is not automatically safe; classify
+it by the actual external effect.
 
 ## Untrusted instructions
 
@@ -101,4 +118,4 @@ destructive operation to investigate it.
 Mark the affected journey with an appropriate blocked or clarification status,
 persist a next action requesting review, and report the scope and impact. Resume
 only after the responsible user or documented procedure grants the needed
-authorization.
+authorization, and never for an action categorically prohibited by this policy.

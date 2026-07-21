@@ -58,9 +58,9 @@ the project manifest path required by the utility. Use the available command
 help to confirm exact arguments in the installed protocol version.
 
 ```sh
-python3 skills/e2e-testing/scripts/e2e_protocol.py --help
-python3 skills/e2e-testing/scripts/e2e_protocol.py init --help
-python3 skills/e2e-testing/scripts/e2e_protocol.py validate --help
+python3 scripts/e2e_protocol.py --help
+python3 scripts/e2e_protocol.py init --help
+python3 scripts/e2e_protocol.py validate --help
 ```
 
 Validate after initialization, before routing, after applying a handoff result,

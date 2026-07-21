@@ -55,6 +55,21 @@ class SkillContractTests(unittest.TestCase):
         self.assert_relative_links_exist(ROOT / "skills/e2e-testing")
         self.assert_relative_links_exist(ROOT / "skills/e2e-web-playwright")
 
+    def test_safety_tiers_and_portable_protocol_examples(self):
+        safety = (ROOT / "skills/e2e-testing/references/safety.md").read_text()
+        protocol = (ROOT / "skills/e2e-testing/references/protocol.md").read_text()
+
+        self.assertIn("explicitly configured staging target", safety)
+        self.assertIn("additional approval for mutation or destructive work", safety)
+        self.assertIn("explicit configured production allow-policy", safety)
+        self.assertIn("non-destructive observation only", safety)
+        self.assertIn("categorically prohibited", safety)
+        self.assertIn("one-off approval cannot override", safety)
+        self.assertIn("python3 scripts/e2e_protocol.py --help", protocol)
+        self.assertIn("python3 scripts/e2e_protocol.py init --help", protocol)
+        self.assertIn("python3 scripts/e2e_protocol.py validate --help", protocol)
+        self.assertNotIn("skills/e2e-testing/scripts/e2e_protocol.py", protocol)
+
 
 if __name__ == "__main__":
     unittest.main()
