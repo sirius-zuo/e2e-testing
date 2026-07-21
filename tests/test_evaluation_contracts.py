@@ -8,9 +8,12 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 from evals.evaluate_result import evaluate
+from evals import run_host_eval
 from protocol.v1.e2e_protocol import new_manifest
 
 
@@ -308,6 +311,160 @@ class EvaluatorTests(unittest.TestCase):
         )
         self.assertEqual(subprocess.run(["node", "--test"], cwd=repair, capture_output=True).returncode, 0)
         self.assertEqual(subprocess.run(["node", "--test"], cwd=product, capture_output=True).returncode, 0)
+
+
+class HostHarnessTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.results = Path(self.tmp.name) / "results"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, host="codex", case="greenfield-source", *, diagnostics=None, returncode=0, keep_results=False):
+        completed = subprocess.CompletedProcess([], returncode, stdout="host prose", stderr="host stderr")
+        with (
+            mock.patch.object(run_host_eval, "RESULTS", self.results),
+            mock.patch("evals.run_host_eval.shutil.which", return_value=f"/usr/bin/{host}"),
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed) as run,
+            mock.patch("evals.run_host_eval.evaluate", return_value=diagnostics or []) as evaluator,
+        ):
+            status = run_host_eval.run_case(host, case, keep_results=keep_results)
+        return status, run, evaluator
+
+    def test_refuses_a_missing_host_executable_before_creating_a_process(self):
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value=None),
+            mock.patch("evals.run_host_eval.subprocess.run") as run,
+        ):
+            with self.assertRaisesRegex(run_host_eval.HostUnavailableError, "codex executable"):
+                run_host_eval.run_case("codex", "greenfield-source")
+        run.assert_not_called()
+
+    def test_uses_the_exact_codex_command_prefix_and_case_prompt(self):
+        status, run, evaluator = self._run("codex")
+        self.assertEqual(status, 0)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:4], ["codex", "exec", "--full-auto", "-"])
+        self.assertEqual(run.call_args.kwargs["input"], json.loads((CASES / "greenfield-source.json").read_text())["prompt"])
+        self.assertNotIn("generated-unverified", run.call_args.kwargs["input"])
+        self.assertNotIn("required_evidence_ids", run.call_args.kwargs["input"])
+        evaluator.assert_called_once()
+
+    def test_uses_the_exact_claude_command_prefix(self):
+        status, run, _ = self._run("claude")
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            run.call_args.args[0][:5],
+            ["claude", "-p", "--permission-mode", "acceptEdits", "--no-session-persistence"],
+        )
+
+    def test_installs_both_skills_in_the_host_specific_directory(self):
+        for host, skill_root in (("codex", ".agents/skills"), ("claude", ".claude/skills")):
+            with self.subTest(host=host):
+                self._run(host, keep_results=True)
+                workspace = next((self.results / host / "greenfield-source").glob("*/workspace"))
+                self.assertTrue((workspace / skill_root / "e2e-testing" / "SKILL.md").is_file())
+                self.assertTrue((workspace / skill_root / "e2e-web-playwright" / "SKILL.md").is_file())
+
+    def test_each_run_uses_a_fresh_fixture_copy_and_never_the_source_fixture(self):
+        _, first, _ = self._run(keep_results=True)
+        _, second, _ = self._run(keep_results=True)
+        first_workspace = Path(first.call_args.kwargs["cwd"])
+        second_workspace = Path(second.call_args.kwargs["cwd"])
+        self.assertNotEqual(first_workspace, second_workspace)
+        self.assertNotEqual(first_workspace, FIXTURES / "greenfield-source")
+        self.assertNotEqual(second_workspace, FIXTURES / "greenfield-source")
+        self.assertEqual(_sha256(FIXTURES / "greenfield-source" / "package.json"), json.loads(
+            (FIXTURES / "greenfield-source" / ".fixture-baseline.json").read_text()
+        )["package.json"])
+
+    def test_runs_optional_setup_for_the_host_invocation_and_closes_it_afterward(self):
+        events: list[str] = []
+
+        @contextmanager
+        def setup(case, workspace):
+            events.append(f"start:{case['setup']['ready_url']}")
+            yield
+            events.append("stop")
+
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.evaluate", return_value=[]),
+            mock.patch("evals.run_host_eval.running_setup", side_effect=setup),
+        ):
+            self.assertEqual(run_host_eval.run_case("codex", "live-assisted-generation"), 0)
+        self.assertEqual(events, ["start:http://127.0.0.1:8765/", "stop"])
+
+    def test_evaluates_each_phase_before_applying_the_declared_patch(self):
+        events: list[str] = []
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+        def evaluator(case_path, workspace, phase, state_dir):
+            events.append(f"evaluate:{phase}")
+            self.assertNotEqual(Path(state_dir).parent, Path(workspace))
+            return []
+
+        def patch(workspace, patch_path):
+            events.append(f"patch:{patch_path.name}")
+
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.evaluate", side_effect=evaluator),
+            mock.patch("evals.run_host_eval._apply_declared_patch", side_effect=patch),
+        ):
+            self.assertEqual(run_host_eval.run_case("codex", "product-defect-handoff"), 0)
+        self.assertEqual(events, [
+            "evaluate:handoff",
+            "patch:product-defect-fix.patch",
+            "evaluate:resume",
+        ])
+
+    def test_returns_evaluator_status_instead_of_host_prose_or_process_exit_code(self):
+        self.assertEqual(self._run(diagnostics=["missing manifest"], returncode=0)[0], 1)
+        self.assertEqual(self._run(diagnostics=[], returncode=9)[0], 0)
+
+    def test_retains_transcript_and_workspace_only_when_requested(self):
+        self._run(keep_results=True)
+        result = next((self.results / "codex" / "greenfield-source").iterdir())
+        self.assertTrue((result / "stdout.txt").is_file())
+        self.assertTrue((result / "stderr.txt").is_file())
+        self.assertTrue((result / "workspace").is_dir())
+        self._run(keep_results=False)
+        self.assertEqual(len(list((self.results / "codex" / "greenfield-source").iterdir())), 1)
+
+    def test_writes_unretained_transcript_to_the_temporary_run_directory(self):
+        temporary_root = Path(self.tmp.name) / "ephemeral"
+        temporary_root.mkdir()
+        completed = subprocess.CompletedProcess([], 0, stdout="temporary prose", stderr="temporary stderr")
+        temporary_directory = mock.MagicMock()
+        temporary_directory.__enter__.return_value = str(temporary_root)
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval.tempfile.TemporaryDirectory", return_value=temporary_directory),
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.evaluate", return_value=[]),
+        ):
+            self.assertEqual(run_host_eval.run_case("codex", "greenfield-source"), 0)
+        self.assertEqual((temporary_root / "stdout.txt").read_text(), "temporary prose")
+        self.assertEqual((temporary_root / "stderr.txt").read_text(), "temporary stderr")
+
+    def test_retains_host_transcript_when_a_between_phase_patch_fails(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="handoff prose", stderr="")
+        with (
+            mock.patch.object(run_host_eval, "RESULTS", self.results),
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.evaluate", return_value=[]),
+            mock.patch("evals.run_host_eval._apply_declared_patch", side_effect=RuntimeError("patch failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "patch failed"):
+                run_host_eval.run_case("codex", "product-defect-handoff", keep_results=True)
+        result = next((self.results / "codex" / "product-defect-handoff").iterdir())
+        self.assertEqual((result / "stdout.txt").read_text(), "handoff prose")
 
 
 if __name__ == "__main__":
