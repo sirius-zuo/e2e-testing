@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from contextlib import contextmanager
@@ -18,6 +21,7 @@ from evals.evaluate_result import evaluate, running_setup
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "evals" / "cases"
 FIXTURES = ROOT / "evals" / "fixtures"
+PATCHES = ROOT / "evals" / "patches"
 SKILLS = ROOT / "skills"
 RESULTS = ROOT / "evals" / "results"
 
@@ -26,27 +30,89 @@ CLAUDE = ["claude", "-p", "--permission-mode", "acceptEdits", "--no-session-pers
 HOSTS = {"codex": CODEX, "claude": CLAUDE}
 SKILL_ROOTS = {"codex": Path(".agents/skills"), "claude": Path(".claude/skills")}
 SKILL_NAMES = ("e2e-testing", "e2e-web-playwright")
+CASE_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
+DEFAULT_HOST_TIMEOUT = 300.0
+TERMINATE_TIMEOUT = 2.0
 
 
 class HostUnavailableError(RuntimeError):
     """Raised when an authorized host CLI is not installed for a requested run."""
 
 
+class HostTimeoutError(RuntimeError):
+    """Raised after a host exceeds its bounded execution time."""
+
+    def __init__(self, timeout: float, stdout: str, stderr: str):
+        super().__init__(f"host timed out after {timeout:g} seconds")
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _safe_case_id(case_id: str) -> str:
+    if not isinstance(case_id, str) or not CASE_ID.fullmatch(case_id):
+        raise ValueError("invalid case ID")
+    return case_id
+
+
+def _contained_path(root: Path, reference: str, label: str, *, file_required: bool = False) -> Path:
+    if not isinstance(reference, str):
+        raise ValueError(f"invalid {label} path")
+    relative = Path(reference)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"invalid {label} path")
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as error:
+        raise ValueError(f"invalid {label} path") from error
+    if file_required and not candidate.is_file():
+        raise ValueError(f"missing {label}: {reference}")
+    return candidate
+
+
 def _read_case(case_id: str) -> tuple[Path, dict[str, Any]]:
-    path = CASES / f"{case_id}.json"
+    safe_id = _safe_case_id(case_id)
+    path = _contained_path(CASES, f"{safe_id}.json", "case", file_required=True)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as error:
-        raise ValueError(f"unknown evaluation case: {case_id}") from error
     except json.JSONDecodeError as error:
-        raise ValueError(f"invalid evaluation case: {case_id}: {error}") from error
-    if not isinstance(value, dict):
-        raise ValueError(f"invalid evaluation case: {case_id}")
+        raise ValueError(f"invalid evaluation case: {safe_id}: {error}") from error
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str):
+        raise ValueError(f"invalid evaluation case: {safe_id}")
+    if value["id"] != safe_id:
+        raise ValueError(f"case ID mismatch: requested {safe_id}, found {value['id']}")
     return path, value
 
 
+def _fixture_path(case: dict[str, Any]) -> Path:
+    fixture = case.get("fixture")
+    path = _contained_path(FIXTURES, fixture, "fixture")
+    if not path.is_dir():
+        raise ValueError(f"missing fixture: {fixture}")
+    return path
+
+
+def _patch_path(reference: str) -> Path:
+    if not isinstance(reference, str) or Path(reference).is_absolute() or ".." in Path(reference).parts:
+        raise ValueError("invalid patch path")
+    candidate = (ROOT / reference).resolve()
+    try:
+        candidate.relative_to(PATCHES.resolve())
+    except ValueError as error:
+        raise ValueError("invalid patch path") from error
+    if not candidate.is_file():
+        raise ValueError(f"missing patch: {reference}")
+    return candidate
+
+
 def _result_directory(host: str, case_id: str) -> Path:
-    base = RESULTS / host / case_id
+    _safe_case_id(host)
+    _safe_case_id(case_id)
+    base = (RESULTS / host / case_id).resolve()
+    try:
+        base.relative_to(RESULTS.resolve())
+    except ValueError as error:
+        raise ValueError("invalid retained destination") from error
     base.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     candidate = base / timestamp
@@ -58,26 +124,28 @@ def _result_directory(host: str, case_id: str) -> Path:
     return candidate
 
 
+def _initialize_repository(workspace: Path) -> None:
+    result = subprocess.run(["git", "init", "--quiet"], cwd=workspace, text=True, capture_output=True, check=False)
+    if result.returncode:
+        raise RuntimeError(f"cannot initialize isolated workspace\n{result.stderr}")
+
+
 @contextmanager
-def _workspace(host: str, case: dict[str, Any], keep_results: bool) -> Iterator[tuple[Path, Path, Path]]:
-    fixture = FIXTURES / str(case["fixture"])
-    if not fixture.is_dir():
-        raise ValueError(f"missing fixture: {case['fixture']}")
-
-    if keep_results:
-        retained = _result_directory(host, str(case["id"]))
-        workspace = retained / "workspace"
-        state_dir = retained / "evaluator-state"
-        shutil.copytree(fixture, workspace)
-        yield workspace, state_dir, retained
-        return
-
+def _workspace(case: dict[str, Any]) -> Iterator[tuple[Path, Path, Path]]:
+    fixture = _fixture_path(case)
     with tempfile.TemporaryDirectory(prefix="e2e-host-eval-") as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
+        try:
+            root.relative_to(ROOT.resolve())
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("temporary workspace must be outside repository")
         workspace = root / "workspace"
         state_dir = root / "evaluator-state"
         shutil.copytree(fixture, workspace)
-        yield workspace, state_dir, root
+        _initialize_repository(workspace)
+        yield root, workspace, state_dir
 
 
 def _install_skills(workspace: Path, host: str) -> None:
@@ -89,25 +157,26 @@ def _install_skills(workspace: Path, host: str) -> None:
         shutil.copytree(source, destination_root / skill_name)
 
 
-def _phase_runs(case: dict[str, Any]) -> list[tuple[str | None, str, str | None]]:
+def _phase_runs(case: dict[str, Any]) -> list[tuple[str | None, str, Path | None]]:
     phases = case.get("phases")
     if not phases:
-        return [(None, str(case["prompt"]), None)]
-    runs: list[tuple[str | None, str, str | None]] = []
+        prompt = case.get("prompt")
+        if not isinstance(prompt, str):
+            raise ValueError(f"invalid evaluation case: {case.get('id', 'unknown')}")
+        return [(None, prompt, None)]
+    runs: list[tuple[str | None, str, Path | None]] = []
     for phase in phases:
         if not isinstance(phase, dict) or not isinstance(phase.get("name"), str) or not isinstance(phase.get("prompt"), str):
             raise ValueError(f"invalid phase declaration in case: {case['id']}")
         patch = phase.get("apply_patch")
         if patch is not None and not isinstance(patch, str):
             raise ValueError(f"invalid phase patch in case: {case['id']}")
-        runs.append((phase["name"], phase["prompt"], patch))
+        runs.append((phase["name"], phase["prompt"], _patch_path(patch) if patch else None))
     return runs
 
 
 def _apply_declared_patch(workspace: Path, patch: Path) -> None:
-    result = subprocess.run(
-        ["git", "apply", str(patch)], cwd=workspace, text=True, capture_output=True, check=False,
-    )
+    result = subprocess.run(["git", "apply", str(patch)], cwd=workspace, text=True, capture_output=True, check=False)
     if result.returncode:
         raise RuntimeError(f"authorized patch failed: {patch.relative_to(ROOT)}\n{result.stderr}")
 
@@ -117,41 +186,111 @@ def _write_transcript(artifact_dir: Path, stdout: list[str], stderr: list[str]) 
     (artifact_dir / "stderr.txt").write_text("".join(stderr), encoding="utf-8")
 
 
-def run_case(host: str, case_id: str, *, keep_results: bool = False) -> int:
-    """Run one case and return only the deterministic evaluator's exit status.
+def _popen_kwargs(workspace: Path) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "cwd": workspace,
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+    }
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    else:
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    return kwargs
 
-    The host return code and prose are recorded as evidence but never decide pass or
-    fail. A phase is evaluated before its authorized between-phase patch is applied.
-    """
+
+def _signal_process_tree(process: subprocess.Popen[str], signal_number: int, fallback: str) -> None:
+    if os.name == "posix" and process.pid is not None:
+        try:
+            os.killpg(process.pid, signal_number)
+            return
+        except ProcessLookupError:
+            return
+    getattr(process, fallback)()
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    _signal_process_tree(process, signal.SIGTERM, "terminate")
+    try:
+        process.wait(timeout=TERMINATE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        _signal_process_tree(process, signal.SIGKILL, "kill")
+        try:
+            process.wait(timeout=TERMINATE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # The kill signal has been sent; do not let an unresponsive child
+            # extend or mask the host invocation's configured timeout.
+            pass
+
+
+def _as_text(value: str | bytes | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value or ""
+
+
+def _run_host(command: list[str], workspace: Path, prompt: str, timeout: float) -> tuple[str, str]:
+    process: subprocess.Popen[str] = subprocess.Popen(command, **_popen_kwargs(workspace))
+    try:
+        stdout, stderr = process.communicate(input=prompt, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        partial_stdout = _as_text(error.output)
+        partial_stderr = _as_text(error.stderr)
+        _terminate_process_tree(process)
+        try:
+            drained_stdout, drained_stderr = process.communicate(timeout=TERMINATE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            drained_stdout, drained_stderr = "", ""
+        raise HostTimeoutError(
+            timeout,
+            partial_stdout or _as_text(drained_stdout),
+            partial_stderr or _as_text(drained_stderr),
+        ) from error
+    return _as_text(stdout), _as_text(stderr)
+
+
+def _retain_artifacts(source: Path, host: str, case_id: str) -> None:
+    destination = _result_directory(host, case_id)
+    shutil.copytree(source, destination, dirs_exist_ok=True)
+
+
+def run_case(host: str, case_id: str, *, keep_results: bool = False, host_timeout: float = DEFAULT_HOST_TIMEOUT) -> int:
+    """Run one case and return only the deterministic evaluator's exit status."""
     if host not in HOSTS:
         raise ValueError(f"unsupported host: {host}")
+    if not isinstance(host_timeout, (int, float)) or isinstance(host_timeout, bool) or host_timeout <= 0:
+        raise ValueError("host timeout must be positive")
     if shutil.which(host) is None:
         raise HostUnavailableError(f"{host} executable is required for host evaluation")
 
     case_path, case = _read_case(case_id)
     transcript_out: list[str] = []
     transcript_err: list[str] = []
-    with _workspace(host, case, keep_results) as (workspace, state_dir, artifact_dir):
+    with _workspace(case) as (artifact_dir, workspace, state_dir):
         try:
             _install_skills(workspace, host)
             with running_setup(case, workspace):
                 for index, (phase, prompt, patch) in enumerate(_phase_runs(case)):
-                    # A phase declares the patch that prepares it. This makes the
-                    # mutation occur only after the preceding phase has passed its
-                    # evaluator and before the resumed host invocation begins.
                     if index and patch:
-                        _apply_declared_patch(workspace, ROOT / patch)
-                    result = subprocess.run(
-                        HOSTS[host], cwd=workspace, input=prompt, text=True, capture_output=True, check=False,
-                    )
-                    transcript_out.append(result.stdout or "")
-                    transcript_err.append(result.stderr or "")
+                        _apply_declared_patch(workspace, patch)
+                    try:
+                        stdout, stderr = _run_host(HOSTS[host], workspace, prompt, float(host_timeout))
+                    except HostTimeoutError as error:
+                        transcript_out.append(error.stdout)
+                        transcript_err.append(error.stderr)
+                        raise
+                    transcript_out.append(stdout)
+                    transcript_err.append(stderr)
                     diagnostics = evaluate(case_path, workspace, phase, state_dir)
                     if diagnostics:
                         print("\n".join(diagnostics))
                         return 1
         finally:
             _write_transcript(artifact_dir, transcript_out, transcript_err)
+            if keep_results:
+                _retain_artifacts(artifact_dir, host, case["id"])
     return 0
 
 
@@ -159,11 +298,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=sorted(HOSTS), required=True)
     parser.add_argument("--case", required=True, help="case ID from evals/cases")
-    parser.add_argument("--keep-results", action="store_true", help="retain workspace and transcript under evals/results")
+    parser.add_argument("--keep-results", action="store_true", help="copy artifacts into evals/results after evaluation")
+    parser.add_argument("--host-timeout", type=float, default=DEFAULT_HOST_TIMEOUT, help="maximum seconds per host invocation")
     args = parser.parse_args()
     try:
-        return run_case(args.host, args.case, keep_results=args.keep_results)
-    except (HostUnavailableError, RuntimeError, ValueError) as error:
+        return run_case(args.host, args.case, keep_results=args.keep_results, host_timeout=args.host_timeout)
+    except (HostUnavailableError, HostTimeoutError, RuntimeError, ValueError) as error:
         print(error)
         return 2
 

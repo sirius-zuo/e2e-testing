@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from evals.evaluate_result import evaluate
-from evals import run_host_eval
+from evals import evaluate_result, run_host_eval
 from protocol.v1.e2e_protocol import new_manifest
 
 
@@ -321,41 +321,45 @@ class HostHarnessTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _run(self, host="codex", case="greenfield-source", *, diagnostics=None, returncode=0, keep_results=False):
-        completed = subprocess.CompletedProcess([], returncode, stdout="host prose", stderr="host stderr")
+    def _run(self, host="codex", case="greenfield-source", *, diagnostics=None, returncode=0, keep_results=False, timeout=30):
+        process = mock.Mock(pid=4321, returncode=returncode)
+        process.communicate.return_value = ("host prose", "host stderr")
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with (
             mock.patch.object(run_host_eval, "RESULTS", self.results),
             mock.patch("evals.run_host_eval.shutil.which", return_value=f"/usr/bin/{host}"),
-            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed) as run,
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process) as popen,
             mock.patch("evals.run_host_eval.evaluate", return_value=diagnostics or []) as evaluator,
         ):
-            status = run_host_eval.run_case(host, case, keep_results=keep_results)
-        return status, run, evaluator
+            status = run_host_eval.run_case(host, case, keep_results=keep_results, host_timeout=timeout)
+        return status, popen, evaluator, process
 
     def test_refuses_a_missing_host_executable_before_creating_a_process(self):
         with (
             mock.patch("evals.run_host_eval.shutil.which", return_value=None),
-            mock.patch("evals.run_host_eval.subprocess.run") as run,
+            mock.patch("evals.run_host_eval.subprocess.Popen") as popen,
         ):
             with self.assertRaisesRegex(run_host_eval.HostUnavailableError, "codex executable"):
                 run_host_eval.run_case("codex", "greenfield-source")
-        run.assert_not_called()
+        popen.assert_not_called()
 
     def test_uses_the_exact_codex_command_prefix_and_case_prompt(self):
-        status, run, evaluator = self._run("codex")
+        status, popen, evaluator, process = self._run("codex")
         self.assertEqual(status, 0)
-        command = run.call_args.args[0]
+        command = popen.call_args.args[0]
         self.assertEqual(command[:4], ["codex", "exec", "--full-auto", "-"])
-        self.assertEqual(run.call_args.kwargs["input"], json.loads((CASES / "greenfield-source.json").read_text())["prompt"])
-        self.assertNotIn("generated-unverified", run.call_args.kwargs["input"])
-        self.assertNotIn("required_evidence_ids", run.call_args.kwargs["input"])
+        prompt = process.communicate.call_args.kwargs["input"]
+        self.assertEqual(prompt, json.loads((CASES / "greenfield-source.json").read_text())["prompt"])
+        self.assertNotIn("generated-unverified", prompt)
+        self.assertNotIn("required_evidence_ids", prompt)
         evaluator.assert_called_once()
 
     def test_uses_the_exact_claude_command_prefix(self):
-        status, run, _ = self._run("claude")
+        status, popen, _, _ = self._run("claude")
         self.assertEqual(status, 0)
         self.assertEqual(
-            run.call_args.args[0][:5],
+            popen.call_args.args[0][:5],
             ["claude", "-p", "--permission-mode", "acceptEdits", "--no-session-persistence"],
         )
 
@@ -368,8 +372,8 @@ class HostHarnessTests(unittest.TestCase):
                 self.assertTrue((workspace / skill_root / "e2e-web-playwright" / "SKILL.md").is_file())
 
     def test_each_run_uses_a_fresh_fixture_copy_and_never_the_source_fixture(self):
-        _, first, _ = self._run(keep_results=True)
-        _, second, _ = self._run(keep_results=True)
+        _, first, _, _ = self._run(keep_results=True)
+        _, second, _, _ = self._run(keep_results=True)
         first_workspace = Path(first.call_args.kwargs["cwd"])
         second_workspace = Path(second.call_args.kwargs["cwd"])
         self.assertNotEqual(first_workspace, second_workspace)
@@ -388,10 +392,13 @@ class HostHarnessTests(unittest.TestCase):
             yield
             events.append("stop")
 
+        process = mock.Mock(pid=4321, returncode=0)
+        process.communicate.return_value = ("", "")
         completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with (
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", return_value=[]),
             mock.patch("evals.run_host_eval.running_setup", side_effect=setup),
         ):
@@ -400,6 +407,8 @@ class HostHarnessTests(unittest.TestCase):
 
     def test_evaluates_each_phase_before_applying_the_declared_patch(self):
         events: list[str] = []
+        process = mock.Mock(pid=4321, returncode=0)
+        process.communicate.return_value = ("", "")
         completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
         def evaluator(case_path, workspace, phase, state_dir):
@@ -413,6 +422,7 @@ class HostHarnessTests(unittest.TestCase):
         with (
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", side_effect=evaluator),
             mock.patch("evals.run_host_eval._apply_declared_patch", side_effect=patch),
         ):
@@ -439,13 +449,16 @@ class HostHarnessTests(unittest.TestCase):
     def test_writes_unretained_transcript_to_the_temporary_run_directory(self):
         temporary_root = Path(self.tmp.name) / "ephemeral"
         temporary_root.mkdir()
-        completed = subprocess.CompletedProcess([], 0, stdout="temporary prose", stderr="temporary stderr")
+        process = mock.Mock(pid=4321, returncode=0)
+        process.communicate.return_value = ("temporary prose", "temporary stderr")
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         temporary_directory = mock.MagicMock()
         temporary_directory.__enter__.return_value = str(temporary_root)
         with (
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.tempfile.TemporaryDirectory", return_value=temporary_directory),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", return_value=[]),
         ):
             self.assertEqual(run_host_eval.run_case("codex", "greenfield-source"), 0)
@@ -453,11 +466,14 @@ class HostHarnessTests(unittest.TestCase):
         self.assertEqual((temporary_root / "stderr.txt").read_text(), "temporary stderr")
 
     def test_retains_host_transcript_when_a_between_phase_patch_fails(self):
-        completed = subprocess.CompletedProcess([], 0, stdout="handoff prose", stderr="")
+        process = mock.Mock(pid=4321, returncode=0)
+        process.communicate.return_value = ("handoff prose", "")
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with (
             mock.patch.object(run_host_eval, "RESULTS", self.results),
             mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
             mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
             mock.patch("evals.run_host_eval.evaluate", return_value=[]),
             mock.patch("evals.run_host_eval._apply_declared_patch", side_effect=RuntimeError("patch failed")),
         ):
@@ -465,6 +481,81 @@ class HostHarnessTests(unittest.TestCase):
                 run_host_eval.run_case("codex", "product-defect-handoff", keep_results=True)
         result = next((self.results / "codex" / "product-defect-handoff").iterdir())
         self.assertEqual((result / "stdout.txt").read_text(), "handoff prose")
+
+    def test_executes_outside_the_repository_then_copies_results_afterward(self):
+        status, popen, _, _ = self._run(keep_results=True)
+        self.assertEqual(status, 0)
+        execution_workspace = Path(popen.call_args.kwargs["cwd"]).resolve()
+        self.assertFalse(execution_workspace.is_relative_to(ROOT.resolve()))
+        retained = next((self.results / "codex" / "greenfield-source").glob("*/workspace"))
+        self.assertTrue((retained / "package.json").is_file())
+        self.assertNotEqual(retained.resolve(), execution_workspace)
+
+    def test_rejects_traversal_and_case_id_mismatch_as_untrusted_metadata(self):
+        with self.assertRaisesRegex(ValueError, "invalid case ID"):
+            run_host_eval._read_case("../greenfield-source")
+        with self.assertRaisesRegex(ValueError, "invalid fixture path"):
+            run_host_eval._fixture_path({"fixture": "../fixtures"})
+        with self.assertRaisesRegex(ValueError, "invalid patch path"):
+            run_host_eval._phase_runs({"id": "case", "prompt": "x", "phases": [
+                {"name": "resume", "prompt": "x", "apply_patch": "../../outside.patch"},
+            ]})
+        case_root = Path(self.tmp.name) / "cases"
+        case_root.mkdir()
+        (case_root / "case.json").write_text(json.dumps({"id": "different"}))
+        with mock.patch.object(run_host_eval, "CASES", case_root):
+            with self.assertRaisesRegex(ValueError, "case ID mismatch"):
+                run_host_eval._read_case("case")
+
+    def test_host_timeout_terminates_the_process_tree_and_retains_partial_output(self):
+        timeout = subprocess.TimeoutExpired("codex", 3, output="partial stdout", stderr="partial stderr")
+        process = mock.Mock(pid=4321, returncode=None)
+        process.communicate.side_effect = [timeout, ("partial stdout", "partial stderr")]
+        process.wait.side_effect = [subprocess.TimeoutExpired("codex", 2), None]
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with (
+            mock.patch.object(run_host_eval, "RESULTS", self.results),
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval.subprocess.run", return_value=completed),
+            mock.patch("evals.run_host_eval.subprocess.Popen", return_value=process),
+            mock.patch("evals.run_host_eval.os.killpg") as killpg,
+            mock.patch("evals.run_host_eval.evaluate", return_value=[]),
+        ):
+            with self.assertRaisesRegex(run_host_eval.HostTimeoutError, "3 seconds"):
+                run_host_eval.run_case("codex", "greenfield-source", keep_results=True, host_timeout=3)
+        self.assertEqual(killpg.call_count, 2)
+        result = next((self.results / "codex" / "greenfield-source").iterdir())
+        self.assertEqual((result / "stdout.txt").read_text(), "partial stdout")
+        self.assertEqual((result / "stderr.txt").read_text(), "partial stderr")
+
+    def test_process_tree_cleanup_stops_waiting_after_the_kill_grace_period(self):
+        process = mock.Mock(pid=4321)
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired("codex", 2),
+            subprocess.TimeoutExpired("codex", 2),
+        ]
+        with mock.patch("evals.run_host_eval.os.killpg") as killpg:
+            run_host_eval._terminate_process_tree(process)
+        self.assertEqual(killpg.call_count, 2)
+
+
+class SetupLifecycleTests(unittest.TestCase):
+    def test_polls_declared_ready_url_and_kills_setup_after_termination_timeout(self):
+        case = json.loads((CASES / "live-assisted-generation.json").read_text())
+        process = mock.Mock()
+        process.wait.side_effect = [subprocess.TimeoutExpired("setup", 2), None]
+        response = mock.MagicMock(status=200)
+        response.__enter__.return_value = response
+        with (
+            mock.patch("evals.evaluate_result.subprocess.Popen", return_value=process),
+            mock.patch("evals.evaluate_result.urllib.request.urlopen", side_effect=[OSError("not ready"), response]) as urlopen,
+            mock.patch("evals.evaluate_result.time.sleep"),
+        ):
+            with evaluate_result.running_setup(case, FIXTURES / "live-assisted-generation"):
+                pass
+        self.assertEqual(urlopen.call_args_list[-1].args[0], case["setup"]["ready_url"])
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
 
 
 if __name__ == "__main__":
