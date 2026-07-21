@@ -43,8 +43,13 @@ MODES = {"plan", "generate", "verify", "repair"}
 AUTONOMY_MODES = {"explicit", "auto"}
 TARGET_TIERS = {"local", "ephemeral", "staging", "production", "unspecified"}
 REFERENCE_KEY_SUFFIXES = ("_ref", "_reference", "_id", "_identifier")
+COMPACT_REFERENCE_SUFFIXES = ("ref", "reference", "id", "identifier")
 RAW_SECRET_KEY_SUFFIX = re.compile(
     r"(?:^|_)(?:password|passphrase|token|secret(?:_value)?|api_key|private_key|credentials?)$"
+)
+RAW_SECRET_COMPACT_SUFFIXES = (
+    "password", "passphrase", "token", "accesstoken", "refreshtoken", "secret", "clientsecret",
+    "apikey", "privatekey", "credential", "credentials", "secretvalue",
 )
 ID_COLLECTIONS = (
     "journeys", "tests", "evidence", "conflicts", "attempt_history",
@@ -247,7 +252,8 @@ def _find_secret_keys(value: Any, errors: list[str]) -> None:
     if isinstance(value, dict):
         for key, nested in value.items():
             normalized_key = _normalize_key(key)
-            if not normalized_key.endswith(REFERENCE_KEY_SUFFIXES) and RAW_SECRET_KEY_SUFFIX.search(normalized_key):
+            compact_key = normalized_key.replace("_", "")
+            if not _is_reference_key(normalized_key, compact_key) and _is_raw_secret_key(normalized_key, compact_key):
                 errors.append(f"secret value key is forbidden: {key}")
             _find_secret_keys(nested, errors)
     elif isinstance(value, list):
@@ -261,6 +267,14 @@ def _normalize_key(key: str) -> str:
     normalized = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", normalized)
     normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", normalized)
     return normalized.lower().strip("_")
+
+
+def _is_reference_key(normalized_key: str, compact_key: str) -> bool:
+    return normalized_key.endswith(REFERENCE_KEY_SUFFIXES) or compact_key.endswith(COMPACT_REFERENCE_SUFFIXES)
+
+
+def _is_raw_secret_key(normalized_key: str, compact_key: str) -> bool:
+    return bool(RAW_SECRET_KEY_SUFFIX.search(normalized_key)) or compact_key.endswith(RAW_SECRET_COMPACT_SUFFIXES)
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:

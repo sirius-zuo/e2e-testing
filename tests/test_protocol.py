@@ -72,6 +72,8 @@ class ProtocolTests(unittest.TestCase):
             "access_token", "refresh_token", "client_secret", "private_key", "credentials", "db_passphrase",
             "accessToken", "clientSecret", "privateKey",
             "access-token", "APIKey", "client.secret", "DBPassword",
+            "APIKEY", "apikey", "PRIVATEKEY", "privatekey", "CLIENTSECRET", "clientsecret",
+            "ACCESSTOKEN", "accesstoken",
         ):
             with self.subTest(key=key):
                 manifest = new_manifest("/workspace/app")
@@ -89,6 +91,10 @@ class ProtocolTests(unittest.TestCase):
             "provider_credential_id": "credential-123",
             "access-token-ref": "vault://access-token",
             "APIKeyReference": "vault://api-key",
+            "APIKEYREF": "vault://api-key",
+            "clientSecretReference": "vault://client-secret",
+            "access-token-id": "vault://access-token",
+            "providerCredentialIdentifier": "credential-123",
         }
         self.assertEqual(validate_manifest(manifest), [])
 
