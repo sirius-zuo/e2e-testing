@@ -159,6 +159,8 @@ class SkillContractTests(unittest.TestCase):
             "`target_reference`, and `target_tier`; never copy secrets",
             workflow_semantics,
         )
+        self.assertIn("| `manifest_revision_consumed` | revision read before the evidence-producing run", workflow)
+        self.assertNotIn("| `manifest_revision` |", workflow)
         self.assertIn("| `phase` | current evaluator phase name", workflow)
         for handoff_field in (
             "reproduction_steps", "expected_behavior", "actual_behavior", "artifact_refs",

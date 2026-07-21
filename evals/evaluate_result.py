@@ -313,8 +313,8 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
             selected_ids = set(item.get("test_ids", [])) if isinstance(item, dict) else set()
             if not (
                 _is_execution_evidence(item, test_ids)
-                and item.get("manifest_revision") == expected_revision
-                and not isinstance(item.get("manifest_revision"), bool)
+                and item.get("manifest_revision_consumed") == expected_revision - 1
+                and not isinstance(item.get("manifest_revision_consumed"), bool)
                 and item.get("phase") == expected_phase
                 and scoped_test_ids <= selected_ids
             ):

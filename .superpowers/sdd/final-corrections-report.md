@@ -219,3 +219,68 @@ exit 0
   the Playwright evidence contract now records the current evaluator `phase`.
 - No live Codex or Claude host was started. Existing unrelated untracked files
   and cache directories remain preserved.
+
+---
+
+# Atomic-save revision semantics — 2026-07-21
+
+## Scope
+
+This targeted pass aligns verification evidence with the protocol's atomic-save
+semantics: an execution consumes manifest revision N and the resulting final
+manifest is persisted as revision N+1.
+
+## RED evidence
+
+```text
+python3 -m unittest tests.test_evaluation_contracts.EvaluatorTests.test_verified_case_accepts_execution_that_consumed_the_pre_save_revision tests.test_evaluation_contracts.EvaluatorTests.test_verified_case_rejects_final_or_unrelated_consumed_revision_claims -v
+2 tests: 1 expected failure, 1 pass
+```
+
+The real `save_manifest` path persisted the setup manifest at revision 1 and the
+final verified manifest at revision 2. Evidence correctly recording consumed
+revision 1 was rejected because the evaluator incorrectly demanded revision 2.
+The rejection test already rejected claims for the final revision and an
+unrelated revision.
+
+```text
+python3 -m unittest tests.test_skill_contracts.SkillContractTests.test_playwright_adapter_reference_safety_contract -v
+1 expected failure (the guide still documented ambiguous `manifest_revision`)
+```
+
+## GREEN evidence
+
+```text
+python3 -m unittest <three focused atomic-save and workflow tests> -v
+3 tests: OK
+
+python3 -m unittest tests.test_evaluation_contracts
+55 tests: OK
+
+python3 scripts/sync_protocol.py --check
+exit 0
+
+python3 scripts/validate_skills.py
+validated: 2 skills
+
+python3 -m unittest discover
+80 tests: OK
+
+git diff --check
+exit 0
+```
+
+## Corrections and self-review
+
+- Successful execution records use the unambiguous
+  `manifest_revision_consumed` field.
+- Required execution binding accepts only a consumed revision exactly one less
+  than the atomically persisted final manifest revision, while retaining the
+  current phase and complete scoped-test checks.
+- The regression uses `save_manifest` twice and therefore exercises revision
+  checks, locking, validation, and the atomic writer instead of directly writing
+  JSON.
+- Claims for the persisted final revision or an unrelated revision are rejected.
+- Existing verify, repair, resume, and harness evidence fixtures use consistent
+  consumed-revision values, and the Playwright guide explains the N to N+1 save.
+- No live host was started; unrelated untracked files remain preserved.

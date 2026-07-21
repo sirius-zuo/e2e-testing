@@ -14,7 +14,7 @@ from unittest import mock
 
 from evals.evaluate_result import evaluate
 from evals import evaluate_result, run_host_eval
-from protocol.v1.e2e_protocol import new_manifest
+from protocol.v1.e2e_protocol import new_manifest, save_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,13 +36,13 @@ def _manifest(workspace: Path, status: str = "generated-unverified") -> dict:
     return data
 
 
-def _verification_evidence(test_id: str, *, revision: int, phase: str) -> dict:
+def _verification_evidence(test_id: str, *, revision_consumed: int, phase: str) -> dict:
     return {
         "kind": "verification",
         "command": "node --test tests/login.logic.test.js",
         "exit_code": 0,
         "duration_ms": 125,
-        "manifest_revision": revision,
+        "manifest_revision_consumed": revision_consumed,
         "phase": phase,
         "test_ids": [test_id],
         "outcomes": [{"test_id": test_id, "status": "passed"}],
@@ -163,6 +163,22 @@ class EvaluatorTests(unittest.TestCase):
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest or _manifest(self.workspace)))
 
+    def _save_verified_manifest(self, name: str, revision_claim: int) -> tuple[Path, dict]:
+        workspace = Path(self.tmp.name) / name
+        shutil.copytree(FIXTURES / "existing-playwright", workspace)
+        path = workspace / ".e2e" / "manifest.json"
+        consumed = save_manifest(path, new_manifest(str(workspace), mode="verify"), expected_revision=None)
+        final = dict(consumed)
+        final["status"] = "verified"
+        final["journeys"] = [{"id": "journey-login", "status": "verified"}]
+        final["tests"] = [{"id": "test-login", "journey_id": "journey-login", "status": "passed"}]
+        execution = _verification_evidence(
+            "test-login", revision_consumed=revision_claim, phase="verify",
+        )
+        execution["id"] = "evidence-verification"
+        final["evidence"] = [execution]
+        return workspace, save_manifest(path, final, expected_revision=consumed["revision"])
+
     def test_detects_forbidden_preserved_file_change(self):
         self._write_manifest()
         (self.workspace / "package.json").write_text('{"changed": true}\n')
@@ -255,7 +271,7 @@ class EvaluatorTests(unittest.TestCase):
             {"id": "test-login", "journey_id": "journey-login", "status": "passed"},
             {"id": "test-checkout", "journey_id": "journey-checkout", "status": "passed"},
         ]
-        unrelated = _verification_evidence("test-checkout", revision=3, phase="verify")
+        unrelated = _verification_evidence("test-checkout", revision_consumed=3, phase="verify")
         unrelated["id"] = "evidence-unrelated"
         manifest["evidence"] = [
             {"id": "evidence-verification", "kind": "verification"}, unrelated,
@@ -280,7 +296,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["revision"] = 3
         manifest["journeys"] = [{"id": "journey-login", "status": "verified"}]
         manifest["tests"] = [{"id": "test-login", "journey_id": "journey-login", "status": "passed"}]
-        execution = _verification_evidence("test-login", revision=3, phase="verify")
+        execution = _verification_evidence("test-login", revision_consumed=2, phase="verify")
         execution["id"] = "evidence-verification"
         manifest["evidence"] = [execution]
         target = workspace / ".e2e"
@@ -291,6 +307,24 @@ class EvaluatorTests(unittest.TestCase):
         case_path = Path(self.tmp.name) / "verify-bound-success-case.json"
         case_path.write_text(json.dumps(case))
         self.assertEqual(evaluate(case_path, workspace), [])
+
+    def test_verified_case_accepts_execution_that_consumed_the_pre_save_revision(self):
+        workspace, saved = self._save_verified_manifest("verify-consumed-revision", revision_claim=1)
+        self.assertEqual(saved["revision"], 2)
+        self.assertEqual(evaluate(CASES / "verify-pass.json", workspace), [])
+
+    def test_verified_case_rejects_final_or_unrelated_consumed_revision_claims(self):
+        for label, revision_claim in (("final", 2), ("unrelated", 7)):
+            with self.subTest(claim=label):
+                workspace, saved = self._save_verified_manifest(
+                    f"verify-{label}-revision", revision_claim=revision_claim,
+                )
+                self.assertEqual(saved["revision"], 2)
+                self.assertIn(
+                    "required execution evidence is not bound to this phase, revision, and scoped tests: "
+                    "evidence-verification",
+                    evaluate(CASES / "verify-pass.json", workspace),
+                )
 
     def test_budget_blocked_case_rejects_an_evidence_label_without_budget_details(self):
         workspace = Path(self.tmp.name) / "budget-evidence"
@@ -334,12 +368,13 @@ class EvaluatorTests(unittest.TestCase):
         shutil.copytree(FIXTURES / "repairable-test-defect", workspace)
         manifest = _manifest(workspace, "verified")
         manifest["mode"] = "repair"
+        manifest["revision"] = 1
         manifest["evidence"] = [
             {"id": "evidence-repair", "classification": {
                 "primary": "test-defect", "confidence": 0.9, "rationale": "stale locator",
                 "evidence_ids": ["evidence-repair"],
             }},
-            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision=0, phase="repair")},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision_consumed=0, phase="repair")},
         ]
         manifest["attempt_history"] = [_repair_attempt()]
         target = workspace / ".e2e"
@@ -358,9 +393,10 @@ class EvaluatorTests(unittest.TestCase):
         shutil.copytree(FIXTURES / "repairable-test-defect", workspace)
         manifest = _manifest(workspace, "verified")
         manifest["mode"] = "repair"
+        manifest["revision"] = 1
         manifest["evidence"] = [
             {"id": "evidence-repair", "kind": "repair"},
-            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision=0, phase="repair")},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision_consumed=0, phase="repair")},
         ]
         repaired = workspace / "tests" / "checkout.spec.ts"
         repaired.write_text(repaired.read_text().replace("Submit now", "Place order"))
@@ -431,7 +467,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["revision"] = 8
         manifest["evidence"].append({
             "id": "evidence-reverification",
-            **_verification_evidence("test-checkout", revision=8, phase="resume"),
+            **_verification_evidence("test-checkout", revision_consumed=7, phase="resume"),
         })
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertEqual(
@@ -450,7 +486,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["run_id"] = "run-fresh-product"
         manifest["revision"] = 8
         manifest["evidence"] = _product_defect_evidence() + [
-            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision=8, phase="resume")},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision_consumed=7, phase="resume")},
         ]
         manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
@@ -482,7 +518,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["revision"] = 8
         manifest["evidence"].append({
             "id": "evidence-reverification",
-            **_verification_evidence("test-checkout", revision=8, phase="resume"),
+            **_verification_evidence("test-checkout", revision_consumed=7, phase="resume"),
         })
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
@@ -502,7 +538,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["run_id"] = "run-malformed-product"
         manifest["revision"] = 8
         manifest["evidence"] = _product_defect_evidence() + [
-            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision=8, phase="resume")},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout", revision_consumed=7, phase="resume")},
         ]
         manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
@@ -536,7 +572,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["revision"] = 8
         manifest["evidence"].append({
             "id": "evidence-reverification",
-            **_verification_evidence("test-checkout", revision=8, phase="resume"),
+            **_verification_evidence("test-checkout", revision_consumed=7, phase="resume"),
         })
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
@@ -567,7 +603,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["revision"] = 8
         manifest["evidence"].append({
             "id": "evidence-reverification",
-            **_verification_evidence("test-checkout", revision=8, phase="resume"),
+            **_verification_evidence("test-checkout", revision_consumed=7, phase="resume"),
         })
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
@@ -642,7 +678,7 @@ class HostHarnessTests(unittest.TestCase):
                 manifest["evidence"].append(
                     {
                         "id": "evidence-reverification",
-                        **_verification_evidence("test-checkout", revision=8, phase="resume"),
+                        **_verification_evidence("test-checkout", revision_consumed=7, phase="resume"),
                     }
                 )
                 (target / "manifest.json").write_text(json.dumps(manifest))

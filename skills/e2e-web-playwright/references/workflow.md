@@ -104,7 +104,7 @@ convenience. Record one evidence item per run with exactly these fields:
 | Field | Record |
 | --- | --- |
 | `id` | stable evidence ID |
-| `manifest_revision` | revision consumed by the run |
+| `manifest_revision_consumed` | revision read before the evidence-producing run; the atomic save persists the resulting manifest as the next revision |
 | `phase` | current evaluator phase name (`verify`, `repair`, or a named resumed phase) |
 | `test_ids` | immutable selected IDs |
 | `command` | sanitized command invoked |
