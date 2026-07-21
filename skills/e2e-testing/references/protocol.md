@@ -41,12 +41,14 @@ transition. Common orchestrator transitions are:
 
 | From | Event | To |
 | --- | --- | --- |
-| absent | protocol initialization | planned or discovery-in-progress |
+| absent | protocol initialization | `initialized` then `planned` |
 | needs evidence | conflicting or missing material evidence | `needs-clarification` |
 | planned | routed generation completes | `generated-unverified` |
-| generated-unverified | authorized verification succeeds | verified status defined by manifest |
-| generated-unverified | verification fails | failure-recorded status with repair action |
-| verification failure | authorized repair result is returned | `generated-unverified` pending re-verification |
+| `generated-unverified` | authorized verification starts | `verifying` |
+| `verifying` | verification succeeds with selected-test evidence | `verified` |
+| `verifying` | test defect is classified | `repair-ready` |
+| `verifying` | product defect is classified | `handoff-required` |
+| `repair-ready` | bounded repair is recorded | `generated-unverified` pending re-verification |
 
 Never upgrade a journey merely because an adapter produced artifacts. Verification
 is a distinct transition with its own evidence and authorization conditions.

@@ -37,6 +37,27 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(manifest["autonomy"]["auto_repair"])
         self.assertEqual(validate_manifest(manifest), [])
 
+    def test_auto_manifest_keeps_repair_opt_in_and_uses_a_bounded_usable_clock_budget(self):
+        manifest = new_manifest("/workspace/app", autonomy="auto")
+        self.assertEqual(manifest["autonomy"], {"mode": "auto", "auto_repair": False})
+        self.assertEqual(manifest["attempt_budget"]["wall_clock_seconds"], 300)
+
+    def test_cli_init_preserves_auto_repair_opt_in_and_clock_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            completed = subprocess.run(
+                [
+                    sys.executable, str(PROTOCOL_SCRIPT), "init", "--project-root", tmp,
+                    "--autonomy", "auto", "--output", str(Path(tmp) / "manifest.json"),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        created = json.loads(completed.stdout)
+        self.assertFalse(created["autonomy"]["auto_repair"])
+        self.assertEqual(created["attempt_budget"]["wall_clock_seconds"], 300)
+
     def test_save_increments_revision_and_rejects_stale_writer(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / ".e2e" / "manifest.json"
@@ -118,6 +139,21 @@ class ProtocolTests(unittest.TestCase):
         ]
         errors = validate_manifest(manifest)
         self.assertTrue(any("resume" in error and "object" in error for error in errors))
+
+    def test_tests_and_actions_must_reference_registered_journeys(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["journeys"] = [{"id": "journey-login", "status": "planned"}]
+        manifest["tests"] = [{"id": "test-login", "journey_id": "journey-missing", "status": "generated"}]
+        manifest["next_actions"] = [
+            {"id": "action-login", "capability": "verify", "journey_ids": ["journey-missing"]},
+        ]
+        manifest["handoffs"] = [
+            {"id": "handoff-login", "journey_ids": ["journey-missing"]},
+        ]
+        errors = validate_manifest(manifest)
+        self.assertIn("tests[0].journey_id does not reference a registered journey: journey-missing", errors)
+        self.assertIn("next_actions[0].journey_ids contains an unknown journey: journey-missing", errors)
+        self.assertIn("handoffs[0].journey_ids contains an unknown journey: journey-missing", errors)
 
     def test_save_rejects_a_malformed_existing_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

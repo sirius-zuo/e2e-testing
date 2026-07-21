@@ -11,12 +11,12 @@ Perform read-only browser-framework detection before validating or bootstrapping
 Any detected alternate browser E2E framework—Cypress, WebdriverIO, Selenium, or
 another browser framework—must unconditionally stop as `unsupported-framework`,
 even when Playwright is also present. Mixed-framework continuation is not
-supported. Do not create, update, or validate `.e2e/`; add Playwright,
-dependencies, configuration, tests, evidence, or migration suggestions; or make
-any other target-repository mutation. Report the detected framework names and
-read-only source locations as a returned invocation outcome, not by a manifest
-write, so the caller can surface `unsupported-framework` without changing the
-target repository.
+supported. After detection, persist a valid `unsupported-framework` manifest
+with the detected framework names and read-only source locations. Detection is
+read-only and the outcome must not add Playwright dependencies, configuration,
+tests, evidence, migration suggestions, or any other Playwright/test
+infrastructure. This is a durable manifest outcome after read-only detection,
+not permission to continue into setup or execution.
 
 Only after the framework gate finds no alternate browser E2E framework, locate
 the project root and `.e2e/manifest.json`. Resolve `ADAPTER_ROOT` as the installed

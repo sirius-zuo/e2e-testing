@@ -2,6 +2,7 @@
   "id": "repair-test-defect",
   "entry_skill": "e2e-testing",
   "mode": "repair",
+  "autonomy": {"mode": "explicit", "auto_repair": false},
   "prompt": "Use the e2e-testing Agent Skill in repair mode to repair the recorded test defect, keep the intended checkout assertion, and reverify it.",
   "fixture": "repairable-test-defect",
   "expect": {

@@ -20,7 +20,7 @@ from protocol.v1.e2e_protocol import new_manifest
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "evals" / "cases"
 FIXTURES = ROOT / "evals" / "fixtures"
-REQUIRED_CASE_FIELDS = {"id", "entry_skill", "mode", "prompt", "fixture", "expect"}
+REQUIRED_CASE_FIELDS = {"id", "entry_skill", "mode", "autonomy", "prompt", "fixture", "expect"}
 
 
 def _sha256(path: Path) -> str:
@@ -34,6 +34,62 @@ def _manifest(workspace: Path, status: str = "generated-unverified") -> dict:
     data["tests"] = [{"id": "test-checkout", "journey_id": "journey-checkout", "status": "generated"}]
     data["evidence"] = [{"id": "evidence-source", "kind": "source-derived"}]
     return data
+
+
+def _verification_evidence(test_id: str) -> dict:
+    return {
+        "kind": "verification",
+        "command": "node --test tests/login.logic.test.js",
+        "exit_code": 0,
+        "duration_ms": 125,
+        "test_ids": [test_id],
+        "outcomes": [{"test_id": test_id, "status": "passed"}],
+        "execution_environment": {
+            "browser_project": "chromium",
+            "os_platform": "test-os",
+            "runtime": "node 22",
+            "application_build_ref": "fixture",
+            "target_reference": "local-fixture",
+            "target_tier": "local",
+        },
+    }
+
+
+def _product_defect_evidence() -> dict:
+    return {
+        "kind": "verification",
+        "command": "node --test tests/checkout.logic.test.js",
+        "exit_code": 1,
+        "duration_ms": 125,
+        "test_ids": ["test-checkout"],
+        "outcomes": [{"test_id": "test-checkout", "status": "failed"}],
+        "execution_environment": {
+            "browser_project": "chromium", "os_platform": "test-os", "runtime": "node 22",
+            "application_build_ref": "fixture", "target_reference": "local-fixture", "target_tier": "local",
+        },
+        "classification": {
+            "primary": "product-defect", "confidence": 0.9,
+            "rationale": "The selected assertion matches the fixture specification.",
+            "evidence_ids": ["evidence-product-defect"],
+        },
+    }
+
+
+def _product_defect_handoff() -> dict:
+    return {
+        "id": "handoff-product-defect", "capability": "fix-product-defect",
+        "journey_ids": ["journey-checkout"],
+        "resume": {"command": "e2e-web-playwright verify"},
+        "expected": "Checkout succeeds", "actual": "Checkout fails", "evidence_ids": ["evidence-product-defect"],
+    }
+
+
+def _repair_attempt() -> dict:
+    return {
+        "id": "attempt-repair-1", "test_ids": ["test-checkout"],
+        "allowed_paths": ["tests/checkout.spec.ts"],
+        "assertion_comparison": "The checkout assertion remains equally specific.",
+    }
 
 
 class FixtureContractTests(unittest.TestCase):
@@ -121,12 +177,57 @@ class EvaluatorTests(unittest.TestCase):
         case = CASES / "unsupported-cypress.json"
         target = workspace / ".e2e"
         target.mkdir()
-        (target / "manifest.json").write_text(json.dumps(_manifest(workspace, "unsupported-framework")))
+        manifest = _manifest(workspace, "unsupported-framework")
+        manifest["evidence"] = [{
+            "id": "evidence-framework-detection", "framework": "cypress",
+            "source_locations": ["package.json"], "read_only": True,
+        }]
+        (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertEqual(evaluate(case, workspace), [])
         (target / "manifest.json").unlink()
         self.assertIn("missing manifest: manifest.json", evaluate(case, workspace))
         (target / "manifest.json").write_text("{}")
         self.assertTrue(any(item.startswith("invalid manifest:") for item in evaluate(case, workspace)))
+
+    def test_unsupported_case_requires_the_requested_mode_and_read_only_detection_evidence(self):
+        workspace = Path(self.tmp.name) / "cypress-contract"
+        shutil.copytree(FIXTURES / "unsupported-cypress", workspace)
+        manifest = _manifest(workspace, "unsupported-framework")
+        manifest["mode"] = "verify"
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        diagnostics = evaluate(CASES / "unsupported-cypress.json", workspace)
+        self.assertIn("manifest mode: expected generate, found verify", diagnostics)
+        self.assertIn("missing unsupported-framework detection evidence", diagnostics)
+
+    def test_verified_case_rejects_status_labels_without_execution_evidence(self):
+        workspace = Path(self.tmp.name) / "verify-evidence"
+        shutil.copytree(FIXTURES / "existing-playwright", workspace)
+        manifest = _manifest(workspace, "verified")
+        manifest["mode"] = "verify"
+        manifest["journeys"] = [{"id": "journey-login", "status": "verified"}]
+        manifest["tests"] = [{"id": "test-login", "journey_id": "journey-login", "status": "passed"}]
+        manifest["evidence"] = [{"id": "evidence-verification", "kind": "verification"}]
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        diagnostics = evaluate(CASES / "verify-pass.json", workspace)
+        self.assertIn("verified status requires successful selected-test execution evidence", diagnostics)
+
+    def test_budget_blocked_case_rejects_an_evidence_label_without_budget_details(self):
+        workspace = Path(self.tmp.name) / "budget-evidence"
+        shutil.copytree(FIXTURES / "auto-budget", workspace)
+        manifest = _manifest(workspace, "blocked")
+        manifest["mode"] = "repair"
+        manifest["autonomy"] = {"mode": "auto", "auto_repair": True}
+        manifest["evidence"] = [{"id": "evidence-budget-exhausted"}]
+        manifest["attempt_history"] = [{"id": "attempt-repair-1"}]
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        diagnostics = evaluate(CASES / "auto-budget.json", workspace)
+        self.assertIn("blocked budget outcome requires budget and attempt evidence", diagnostics)
 
     def test_existing_playwright_requires_a_new_checkout_artifact(self):
         workspace = Path(self.tmp.name) / "existing"
@@ -155,7 +256,15 @@ class EvaluatorTests(unittest.TestCase):
         workspace = Path(self.tmp.name) / "repair-contract"
         shutil.copytree(FIXTURES / "repairable-test-defect", workspace)
         manifest = _manifest(workspace, "verified")
-        manifest["evidence"] = [{"id": "evidence-repair"}, {"id": "evidence-reverification"}]
+        manifest["mode"] = "repair"
+        manifest["evidence"] = [
+            {"id": "evidence-repair", "classification": {
+                "primary": "test-defect", "confidence": 0.9, "rationale": "stale locator",
+                "evidence_ids": ["evidence-repair"],
+            }},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout")},
+        ]
+        manifest["attempt_history"] = [_repair_attempt()]
         target = workspace / ".e2e"
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
@@ -167,16 +276,32 @@ class EvaluatorTests(unittest.TestCase):
         repaired.write_text(repaired.read_text().replace("Submit now", "Place order"))
         self.assertEqual(evaluate(CASES / "repair-test-defect.json", workspace), [])
 
+    def test_repair_verified_status_rejects_labels_without_repair_attempt_evidence(self):
+        workspace = Path(self.tmp.name) / "repair-evidence"
+        shutil.copytree(FIXTURES / "repairable-test-defect", workspace)
+        manifest = _manifest(workspace, "verified")
+        manifest["mode"] = "repair"
+        manifest["evidence"] = [
+            {"id": "evidence-repair", "kind": "repair"},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout")},
+        ]
+        repaired = workspace / "tests" / "checkout.spec.ts"
+        repaired.write_text(repaired.read_text().replace("Submit now", "Place order"))
+        target = workspace / ".e2e"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        diagnostics = evaluate(CASES / "repair-test-defect.json", workspace)
+        self.assertIn("repair verification requires classified repair and bounded attempt evidence", diagnostics)
+
     def test_product_defect_resume_allows_only_the_authorized_source_patch(self):
         workspace = Path(self.tmp.name) / "product"
         shutil.copytree(FIXTURES / "product-defect", workspace)
         manifest = _manifest(workspace, status="handoff-required")
+        manifest["mode"] = "verify"
         manifest["run_id"] = "run-product-defect"
         manifest["revision"] = 7
-        manifest["evidence"] = [
-            {"id": "evidence-product-defect"},
-        ]
-        manifest["handoffs"] = [{"id": "handoff-product-defect", "owner": "product-team"}]
+        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "evaluator-state"
         target.mkdir()
@@ -192,7 +317,7 @@ class EvaluatorTests(unittest.TestCase):
         )
         manifest["status"] = "verified"
         manifest["revision"] = 8
-        manifest["evidence"].append({"id": "evidence-reverification"})
+        manifest["evidence"].append({"id": "evidence-reverification", **_verification_evidence("test-checkout")})
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertEqual(
             evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume", state_dir=state), [],
@@ -206,12 +331,14 @@ class EvaluatorTests(unittest.TestCase):
             cwd=workspace, check=True,
         )
         manifest = _manifest(workspace, status="verified")
+        manifest["mode"] = "verify"
         manifest["run_id"] = "run-fresh-product"
         manifest["revision"] = 8
         manifest["evidence"] = [
-            {"id": "evidence-product-defect"}, {"id": "evidence-reverification"},
+            {"id": "evidence-product-defect", **_product_defect_evidence()},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout")},
         ]
-        manifest["handoffs"] = [{"id": "handoff-product-defect", "owner": "product-team"}]
+        manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "fresh-state"
         target.mkdir()
@@ -219,6 +346,31 @@ class EvaluatorTests(unittest.TestCase):
         self.assertIn(
             "missing phase checkpoint: handoff",
             evaluate(CASES / "product-defect-handoff.json", workspace, phase="resume", state_dir=state),
+        )
+
+    def test_product_defect_resume_rejects_unapproved_application_additions(self):
+        workspace = Path(self.tmp.name) / "product-extra-source"
+        shutil.copytree(FIXTURES / "product-defect", workspace)
+        manifest = _manifest(workspace, status="handoff-required")
+        manifest["mode"] = "verify"
+        manifest["run_id"] = "run-product-extra-source"
+        manifest["revision"] = 7
+        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["handoffs"] = [_product_defect_handoff()]
+        target = workspace / ".e2e"
+        state = Path(self.tmp.name) / "extra-source-state"
+        target.mkdir()
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state), [])
+        subprocess.run(["git", "apply", str(ROOT / "evals" / "patches" / "product-defect-fix.patch")], cwd=workspace, check=True)
+        (workspace / "src" / "unapproved.js").write_text("export const unsafe = true;\n")
+        manifest["status"] = "verified"
+        manifest["revision"] = 8
+        manifest["evidence"].append({"id": "evidence-reverification", **_verification_evidence("test-checkout")})
+        (target / "manifest.json").write_text(json.dumps(manifest))
+        self.assertIn(
+            "unauthorized resume change: src/unapproved.js",
+            evaluate(CASES / "product-defect-handoff.json", workspace, "resume", state),
         )
 
     def test_product_defect_resume_rejects_a_malformed_external_checkpoint(self):
@@ -229,10 +381,14 @@ class EvaluatorTests(unittest.TestCase):
             cwd=workspace, check=True,
         )
         manifest = _manifest(workspace, status="verified")
+        manifest["mode"] = "verify"
         manifest["run_id"] = "run-malformed-product"
         manifest["revision"] = 8
-        manifest["evidence"] = [{"id": "evidence-product-defect"}, {"id": "evidence-reverification"}]
-        manifest["handoffs"] = [{"id": "handoff-product-defect"}]
+        manifest["evidence"] = [
+            {"id": "evidence-product-defect", **_product_defect_evidence()},
+            {"id": "evidence-reverification", **_verification_evidence("test-checkout")},
+        ]
+        manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "malformed-state"
         target.mkdir()
@@ -250,10 +406,11 @@ class EvaluatorTests(unittest.TestCase):
         workspace = Path(self.tmp.name) / "unpatched-product"
         shutil.copytree(FIXTURES / "product-defect", workspace)
         manifest = _manifest(workspace, status="handoff-required")
+        manifest["mode"] = "verify"
         manifest["run_id"] = "run-unpatched-product"
         manifest["revision"] = 7
-        manifest["evidence"] = [{"id": "evidence-product-defect"}]
-        manifest["handoffs"] = [{"id": "handoff-product-defect"}]
+        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "unpatched-state"
         target.mkdir()
@@ -261,7 +418,7 @@ class EvaluatorTests(unittest.TestCase):
         self.assertEqual(evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state), [])
         manifest["status"] = "verified"
         manifest["revision"] = 8
-        manifest["evidence"].append({"id": "evidence-reverification"})
+        manifest["evidence"].append({"id": "evidence-reverification", **_verification_evidence("test-checkout")})
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
             "authorized patch not applied: src/checkout.js",
@@ -272,10 +429,11 @@ class EvaluatorTests(unittest.TestCase):
         workspace = Path(self.tmp.name) / "discontinuous-product"
         shutil.copytree(FIXTURES / "product-defect", workspace)
         manifest = _manifest(workspace, status="handoff-required")
+        manifest["mode"] = "verify"
         manifest["run_id"] = "run-original-product"
         manifest["revision"] = 7
-        manifest["evidence"] = [{"id": "evidence-product-defect"}]
-        manifest["handoffs"] = [{"id": "handoff-product-defect"}]
+        manifest["evidence"] = [{"id": "evidence-product-defect", **_product_defect_evidence()}]
+        manifest["handoffs"] = [_product_defect_handoff()]
         target = workspace / ".e2e"
         state = Path(self.tmp.name) / "discontinuous-state"
         target.mkdir()
@@ -288,7 +446,7 @@ class EvaluatorTests(unittest.TestCase):
         manifest["status"] = "verified"
         manifest["run_id"] = "run-restarted-product"
         manifest["revision"] = 8
-        manifest["evidence"].append({"id": "evidence-reverification"})
+        manifest["evidence"].append({"id": "evidence-reverification", **_verification_evidence("test-checkout")})
         (target / "manifest.json").write_text(json.dumps(manifest))
         self.assertIn(
             "run continuity: expected run-original-product, found run-restarted-product",

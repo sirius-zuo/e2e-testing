@@ -2,6 +2,7 @@
   "id": "existing-playwright",
   "entry_skill": "e2e-testing",
   "mode": "generate",
+  "autonomy": {"mode": "explicit", "auto_repair": false},
   "prompt": "Use the e2e-testing Agent Skill in generate mode to add checkout coverage to the existing Playwright suite while preserving its custom fixture API.",
   "fixture": "existing-playwright",
   "expect": {

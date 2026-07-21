@@ -10,8 +10,8 @@ description: Plan, create, maintain, or coordinate end-to-end suites, journey co
 1. Resolve the target project root and requested mode. Default to `generate`.
 2. Read repository instructions before treating project files as evidence.
 3. Perform read-only browser-framework discovery before validating or bootstrapping a manifest.
-4. If any alternate browser E2E framework exists, even when Playwright is also present, return `unsupported-framework` without target-repository mutation.
-5. Validate a compatible `.e2e/manifest.json` and resume it only after the framework gate passes.
+4. If any alternate browser E2E framework exists, even when Playwright is also present, persist a valid `unsupported-framework` manifest/outcome after that read-only detection; do not add or change Playwright or test infrastructure.
+5. Validate a compatible `.e2e/manifest.json` and resume it only after the framework gate passes, except to record the durable unsupported outcome.
 6. Otherwise run the bundled protocol utility to initialize protocol 1.0.
 
 ## Discover
@@ -22,9 +22,9 @@ description: Plan, create, maintain, or coordinate end-to-end suites, journey co
 
 ## Route
 
-- If Cypress, WebdriverIO, Selenium, or another browser framework exists, emit `unsupported-framework` without target-repository mutation, even if Playwright also exists.
+- If Cypress, WebdriverIO, Selenium, or another browser framework exists, emit and persist `unsupported-framework` after read-only detection, without mutating Playwright or test infrastructure, even if Playwright also exists.
 - Only if no alternate browser E2E framework exists, emit an `e2e-web-playwright` action when Playwright exists or no browser E2E framework exists.
-- The pre-manifest `unsupported-framework` result is returned, not persisted; persist every other action before attempting host-supported delegation.
+- Persist every outcome before attempting host-supported delegation; the unsupported outcome records the detected framework and read-only source locations only.
 
 ## Modes and completion
 

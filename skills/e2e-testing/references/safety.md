@@ -27,11 +27,11 @@ Every destructive data operation outside production requires exact-action approv
 
 | Tier | Typical target | Default access | Notes |
 | --- | --- | --- | --- |
-| local | developer machine or disposable local service | allowed after repository instructions | use isolated data where possible |
-| test | dedicated test or CI environment | allowed with stated target | prefer resettable fixtures |
-| staging | pre-production shared environment | only with an explicitly configured staging target | configuration is required even for read-only work |
-| production | customer-facing live environment | only under an explicit configured production allow-policy; non-destructive observation only | In production, mutations and external effects are prohibited |
-| unknown | target cannot be classified | no interaction | request clarification first |
+| `local` | developer machine or disposable local service | allowed after repository instructions | use isolated data where possible |
+| `ephemeral` | dedicated disposable test or CI environment | allowed with stated target | prefer resettable fixtures |
+| `staging` | pre-production shared environment | only with an explicitly configured staging target | configuration is required even for read-only work |
+| `production` | customer-facing live environment | only under an explicit configured production allow-policy; non-destructive observation only | In production, mutations and external effects are prohibited |
+| `unspecified` | target cannot be classified | no interaction | request clarification first |
 
 A hostname, branch name, or visual similarity is insufficient to establish a
 tier. Record the evidence supporting the classification in the journey risk
@@ -49,10 +49,10 @@ Classify each planned action before execution.
 
 | Risk | Examples | Gate |
 | --- | --- | --- |
-| low | read-only navigation in local or test | record target and proceed |
+| low | read-only navigation in local or ephemeral | record target and proceed |
 | medium | creating disposable test records, test login | confirm known cleanup path and target tier |
 | medium | read-only staging observation | explicitly configured staging target |
-| high | destructive data operation outside production, including a local or test reset endpoint | exact-action approval; staging also requires an explicitly configured target |
+| high | destructive data operation outside production, including a local or ephemeral reset endpoint | exact-action approval; staging also requires an explicitly configured target |
 | high | staging mutation, destructive work, privileged role, external side effect | configured staging target plus additional approval for mutation or destructive work |
 | prohibited | production mutation, payment, irreversible deletion, or test-data mutation | In production, categorically prohibited; do not perform |
 

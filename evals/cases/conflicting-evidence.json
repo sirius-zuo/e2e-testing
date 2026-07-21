@@ -2,6 +2,7 @@
   "id": "conflicting-evidence",
   "entry_skill": "e2e-testing",
   "mode": "generate",
+  "autonomy": {"mode": "explicit", "auto_repair": false},
   "prompt": "Use the e2e-testing Agent Skill in generate mode to cover checkout. Preserve the unresolved authentication conflict and continue any unaffected journey.",
   "fixture": "conflicting-evidence",
   "expect": {

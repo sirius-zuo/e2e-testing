@@ -69,7 +69,7 @@ def new_manifest(project_root: str, mode: str = "generate", autonomy: str = "exp
         "run_id": f"run-{uuid.uuid4()}",
         "revision": 0,
         "mode": mode,
-        "autonomy": {"mode": autonomy, "auto_repair": autonomy == "auto"},
+        "autonomy": {"mode": autonomy, "auto_repair": False},
         "status": "initialized",
         "project": {"root": str(project_root), "framework": None},
         "target": {"tier": "unspecified", "base_url_ref": None, "credentials_ref": None},
@@ -77,7 +77,7 @@ def new_manifest(project_root: str, mode: str = "generate", autonomy: str = "exp
         "tests": [],
         "evidence": [],
         "conflicts": [],
-        "attempt_budget": {"repair": 0, "verification": 1, "wall_clock_seconds": 1},
+        "attempt_budget": {"repair": 0, "verification": 1, "wall_clock_seconds": 300},
         "attempt_history": [],
         "handoffs": [],
         "authorizations": [],
@@ -218,6 +218,11 @@ def _validate_budget(value: Any, errors: list[str]) -> None:
 
 
 def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
+    journey_ids = {
+        item.get("id")
+        for item in data.get("journeys", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
     for name in ID_COLLECTIONS:
         items = data.get(name)
         if not isinstance(items, list):
@@ -237,6 +242,10 @@ def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
             if name == "tests":
                 if not isinstance(item.get("journey_id"), str):
                     errors.append(f"tests[{index}] must have a string journey_id")
+                elif item["journey_id"] not in journey_ids:
+                    errors.append(
+                        f"tests[{index}].journey_id does not reference a registered journey: {item['journey_id']}"
+                    )
                 if not isinstance(item.get("status"), str):
                     errors.append(f"tests[{index}] must have a string status")
             if name == "next_actions":
@@ -244,8 +253,23 @@ def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
                     errors.append(f"next_actions[{index}] must have a string capability")
                 if not isinstance(item.get("journey_ids"), list) or not all(isinstance(v, str) for v in item.get("journey_ids", [])):
                     errors.append(f"next_actions[{index}] must have string journey_ids")
+                elif any(journey_id not in journey_ids for journey_id in item["journey_ids"]):
+                    for journey_id in item["journey_ids"]:
+                        if journey_id not in journey_ids:
+                            errors.append(
+                                f"next_actions[{index}].journey_ids contains an unknown journey: {journey_id}"
+                            )
                 if "resume" in item and not isinstance(item["resume"], dict):
                     errors.append(f"next_actions[{index}].resume must be an object")
+            if name == "handoffs" and "journey_ids" in item:
+                if not isinstance(item["journey_ids"], list) or not all(isinstance(v, str) for v in item["journey_ids"]):
+                    errors.append(f"handoffs[{index}].journey_ids must be an array of strings")
+                else:
+                    for journey_id in item["journey_ids"]:
+                        if journey_id not in journey_ids:
+                            errors.append(
+                                f"handoffs[{index}].journey_ids contains an unknown journey: {journey_id}"
+                            )
 
 
 def _find_secret_keys(value: Any, errors: list[str]) -> None:

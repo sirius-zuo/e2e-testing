@@ -9,8 +9,8 @@ description: Plan, generate, verify, and safely repair Playwright browser E2E co
 
 1. Resolve `plan`, `generate`, `verify`, or `repair`; default to `generate`.
 2. Perform read-only browser-framework detection before validating or bootstrapping a manifest.
-3. Stop as `unsupported-framework` if another browser E2E framework exists; return the outcome without target-repository mutation.
-4. Validate an existing manifest or bootstrap one with the bundled utility only after the framework gate passes.
+3. Stop as `unsupported-framework` if another browser E2E framework exists; persist only that durable outcome after detection, without Playwright or test-infrastructure mutation.
+4. Validate an existing manifest or bootstrap one with the bundled utility only after the framework gate passes, except to record that unsupported outcome.
 
 ## Preserve the project
 

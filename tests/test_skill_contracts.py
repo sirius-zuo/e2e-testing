@@ -6,6 +6,8 @@ import re
 import unittest
 from pathlib import Path
 
+from protocol.v1.e2e_protocol import TARGET_TIERS, TRANSITIONS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
@@ -55,8 +57,8 @@ class SkillContractTests(unittest.TestCase):
             text,
         )
         self.assertIn("even when Playwright is also present", text)
-        self.assertIn("without target-repository mutation", text)
-        self.assertIn("pre-manifest `unsupported-framework` result is returned, not persisted", text)
+        self.assertIn("without mutating Playwright or test infrastructure", text)
+        self.assertIn("persist a valid `unsupported-framework` manifest/outcome", text)
         self.assertLess(
             text.index("read-only browser-framework discovery"),
             text.index("Validate a compatible `.e2e/manifest.json`"),
@@ -142,15 +144,13 @@ class SkillContractTests(unittest.TestCase):
         )
         self.assertIn("even when Playwright is also present", workflow)
         self.assertIn("unconditionally stop as `unsupported-framework`", workflow)
-        self.assertIn("Do not create, update, or validate `.e2e/`", workflow)
-        self.assertIn(
-            "returned invocation outcome, not by a manifest write", workflow_semantics
-        )
+        self.assertIn("After detection, persist a valid `unsupported-framework` manifest", workflow)
+        self.assertIn("durable manifest outcome after read-only detection", workflow_semantics)
         self.assertLess(
             workflow_semantics.index("Perform read-only browser-framework detection"),
             workflow_semantics.index("validate an existing manifest"),
         )
-        self.assertIn("without calling the protocol utility", protocol)
+        self.assertIn("Use the protocol utility only to persist that outcome", protocol)
 
         self.assertIn(
             "`execution_environment` | distinct sanitized record with "
@@ -181,9 +181,27 @@ class SkillContractTests(unittest.TestCase):
             protocol_semantics.index("It can otherwise run directly"),
         )
         self.assertIn(
-            "without calling the protocol utility, creating or validating `.e2e/`, or writing any target-project evidence.",
+            "after read-only detection, create the durable unsupported-framework outcome without adding Playwright infrastructure.",
             protocol_semantics,
         )
+
+    def test_protocol_documents_use_exact_schema_vocabulary(self):
+        schema = (ROOT / "protocol/v1/manifest.schema.json").read_text()
+        orchestrator_protocol = (ROOT / "skills/e2e-testing/references/protocol.md").read_text()
+        workflow = (ROOT / "skills/e2e-testing/references/workflow.md").read_text()
+        safety = (ROOT / "skills/e2e-testing/references/safety.md").read_text()
+
+        for status in TRANSITIONS:
+            self.assertIn(f'"{status}"', schema)
+        self.assertNotIn("discovery-in-progress", orchestrator_protocol)
+        self.assertNotIn("failure-recorded", orchestrator_protocol)
+        self.assertNotIn("handoff_id", workflow)
+        self.assertIn("| `id` | stable identifier for this delegation |", workflow)
+        self.assertEqual(TARGET_TIERS, {"local", "ephemeral", "staging", "production", "unspecified"})
+        self.assertIn("`ephemeral`", safety)
+        self.assertIn("`unspecified`", safety)
+        self.assertNotIn("| test |", safety)
+        self.assertNotIn("| unknown |", safety)
 
 
 if __name__ == "__main__":

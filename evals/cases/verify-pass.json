@@ -2,6 +2,7 @@
   "id": "verify-pass",
   "entry_skill": "e2e-testing",
   "mode": "verify",
+  "autonomy": {"mode": "explicit", "auto_repair": false},
   "prompt": "Use the e2e-testing Agent Skill in verify mode to verify the existing login journey and preserve the custom fixture API.",
   "fixture": "existing-playwright",
   "expect": {

@@ -179,6 +179,129 @@ def _check_traceability(manifest: dict[str, Any], expect: dict[str, Any]) -> lis
     ]
 
 
+def _is_execution_evidence(item: Any, test_ids: set[str]) -> bool:
+    if not isinstance(item, dict):
+        return False
+    command = item.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    if item.get("exit_code") != 0 or not isinstance(item.get("duration_ms"), (int, float)):
+        return False
+    selected = item.get("test_ids")
+    outcomes = item.get("outcomes")
+    environment = item.get("execution_environment")
+    if not isinstance(selected, list) or not selected or not all(isinstance(test_id, str) for test_id in selected):
+        return False
+    if not set(selected) <= test_ids or not isinstance(outcomes, list):
+        return False
+    outcome_ids = {
+        outcome.get("test_id")
+        for outcome in outcomes
+        if isinstance(outcome, dict) and outcome.get("status") == "passed"
+    }
+    required_environment = {
+        "browser_project", "os_platform", "runtime", "application_build_ref", "target_reference", "target_tier",
+    }
+    return (
+        set(selected) <= outcome_ids
+        and isinstance(environment, dict)
+        and required_environment <= set(environment)
+        and all(isinstance(environment[key], str) and environment[key] for key in required_environment)
+    )
+
+
+def _classification(item: Any, primary: str) -> bool:
+    if not isinstance(item, dict) or not isinstance(item.get("classification"), dict):
+        return False
+    classification = item["classification"]
+    return (
+        classification.get("primary") == primary
+        and isinstance(classification.get("confidence"), (int, float))
+        and classification["confidence"] >= 0.8
+        and isinstance(classification.get("rationale"), str)
+        and bool(classification["rationale"].strip())
+        and isinstance(classification.get("evidence_ids"), list)
+        and bool(classification["evidence_ids"])
+    )
+
+
+def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+    status = manifest.get("status")
+    evidence = manifest.get("evidence")
+    tests = manifest.get("tests")
+    handoffs = manifest.get("handoffs")
+    actions = manifest.get("next_actions")
+    if not isinstance(evidence, list):
+        return []
+    test_ids = _ids(tests)
+    diagnostics: list[str] = []
+    if status == "verified" and not any(_is_execution_evidence(item, test_ids) for item in evidence):
+        diagnostics.append("verified status requires successful selected-test execution evidence")
+    if status == "unsupported-framework" and not any(
+        isinstance(item, dict)
+        and isinstance(item.get("framework"), str)
+        and item["framework"]
+        and isinstance(item.get("source_locations"), list)
+        and bool(item["source_locations"])
+        and item.get("read_only") is True
+        for item in evidence
+    ):
+        diagnostics.append("missing unsupported-framework detection evidence")
+    if status == "handoff-required":
+        valid_handoff = any(
+            isinstance(item, dict)
+            and item.get("capability") == "fix-product-defect"
+            and isinstance(item.get("journey_ids"), list)
+            and bool(item["journey_ids"])
+            and isinstance(item.get("resume"), dict)
+            and isinstance(item["resume"].get("command"), str)
+            and bool(item["resume"]["command"].strip())
+            for item in handoffs if isinstance(handoffs, list)
+        )
+        if not any(_classification(item, "product-defect") for item in evidence) or not valid_handoff:
+            diagnostics.append("handoff-required status requires product-defect classification and resumable handoff evidence")
+    if status == "needs-authorization":
+        valid_action = any(
+            isinstance(item, dict)
+            and isinstance(item.get("capability"), str)
+            and bool(item["capability"])
+            and isinstance(item.get("journey_ids"), list)
+            for item in actions if isinstance(actions, list)
+        )
+        if not any(_classification(item, "authorization-required") for item in evidence) or not valid_action:
+            diagnostics.append("needs-authorization status requires authorization classification and actionable handoff evidence")
+    if manifest.get("mode") == "repair" and status == "verified":
+        attempts = manifest.get("attempt_history")
+        valid_attempt = any(
+            isinstance(item, dict)
+            and isinstance(item.get("test_ids"), list)
+            and bool(item["test_ids"])
+            and isinstance(item.get("allowed_paths"), list)
+            and bool(item["allowed_paths"])
+            and isinstance(item.get("assertion_comparison"), str)
+            and bool(item["assertion_comparison"].strip())
+            for item in attempts if isinstance(attempts, list)
+        )
+        if not any(_classification(item, "test-defect") for item in evidence) or not valid_attempt:
+            diagnostics.append("repair verification requires classified repair and bounded attempt evidence")
+    if status == "blocked" and "evidence-budget-exhausted" in expect.get("required_evidence_ids", []):
+        attempts = _ids(manifest.get("attempt_history"))
+        valid_budget_evidence = any(
+            isinstance(item, dict)
+            and item.get("id") == "evidence-budget-exhausted"
+            and item.get("budget_exhausted") is True
+            and item.get("budget") in {"repair", "verification", "wall_clock_seconds"}
+            and isinstance(item.get("attempt_id"), str)
+            and item["attempt_id"] in attempts
+            and isinstance(item.get("reason"), str)
+            and bool(item["reason"].strip())
+            for item in evidence
+        )
+        if not valid_budget_evidence:
+            diagnostics.append("blocked budget outcome requires budget and attempt evidence")
+    return diagnostics
+
+
 def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list[str]:
     diagnostics: list[str] = []
     baseline, baseline_errors = _read_json(fixture / ".fixture-baseline.json", "fixture baseline")
@@ -277,18 +400,40 @@ def _check_authorized_patch(workspace: Path, fixture: Path, patch_reference: str
         )
         if result.returncode:
             return [f"invalid authorized patch: {patch_reference}"]
-        changed = [
-            path.relative_to(fixture).as_posix()
+        expected_files = {
+            path.relative_to(expected_root).as_posix(): path
+            for path in expected_root.rglob("*")
+            if path.is_file() and path.name != ".fixture-baseline.json"
+        }
+        baseline_files = {
+            path.relative_to(fixture).as_posix(): path
             for path in fixture.rglob("*")
             if path.is_file() and path.name != ".fixture-baseline.json"
-            and (expected_root / path.relative_to(fixture)).read_bytes() != path.read_bytes()
+        }
+        changed = [
+            relative for relative, path in baseline_files.items()
+            if expected_files[relative].read_bytes() != path.read_bytes()
         ]
         diagnostics: list[str] = []
         for relative in sorted(changed):
-            expected = expected_root / relative
+            expected = expected_files[relative]
             actual = workspace / relative
             if not actual.is_file() or actual.read_bytes() != expected.read_bytes():
                 diagnostics.append(f"authorized patch not applied: {relative}")
+        for relative, expected in sorted(expected_files.items()):
+            if relative in changed or relative.startswith(".git/"):
+                continue
+            actual = workspace / relative
+            if not actual.is_file() or actual.read_bytes() != expected.read_bytes():
+                diagnostics.append(f"unauthorized resume change: {relative}")
+        actual_files = {
+            relative: path for relative, path in _workspace_files(workspace)
+            if not relative.startswith(".git/") and relative != ".fixture-baseline.json"
+        }
+        for relative in sorted(set(actual_files) - set(expected_files)):
+            if relative == ".e2e/manifest.json" or relative.startswith(".e2e/evidence/") or relative.startswith(".e2e/handoffs/"):
+                continue
+            diagnostics.append(f"unauthorized resume change: {relative}")
         return diagnostics
 
 
@@ -348,8 +493,15 @@ def evaluate(
         diagnostics.append(
             f"manifest status: expected {expected_status}, found {manifest.get('status')}"
         )
+    expected_mode = expect.get("mode", case["mode"])
+    if manifest.get("mode") != expected_mode:
+        diagnostics.append(f"manifest mode: expected {expected_mode}, found {manifest.get('mode')}")
+    expected_autonomy = case.get("autonomy", {"mode": "explicit", "auto_repair": False})
+    if manifest.get("autonomy") != expected_autonomy:
+        diagnostics.append(f"manifest autonomy: expected {expected_autonomy}, found {manifest.get('autonomy')}")
     diagnostics.extend(_check_required_ids(manifest, expect))
     diagnostics.extend(_check_traceability(manifest, expect))
+    diagnostics.extend(_check_status_evidence(manifest, expect))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))

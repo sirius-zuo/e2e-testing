@@ -2,10 +2,12 @@
   "id": "unsupported-cypress",
   "entry_skill": "e2e-testing",
   "mode": "generate",
+  "autonomy": {"mode": "explicit", "auto_repair": false},
   "prompt": "Use the e2e-testing Agent Skill in generate mode to create E2E coverage for login. Work autonomously within the repository and stop at the first durable outcome.",
   "fixture": "unsupported-cypress",
   "expect": {
     "manifest_status": "unsupported-framework",
+    "required_evidence_ids": ["evidence-framework-detection"],
     "unchanged_globs": ["package.json", "cypress.config.ts", "cypress/**"],
     "absent_globs": ["playwright.config.*", "tests/**/*.spec.*"]
   }
