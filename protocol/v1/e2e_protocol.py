@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import re
@@ -13,6 +12,11 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 class ProtocolError(Exception):
@@ -114,6 +118,10 @@ def save_manifest(path: str | Path, data: dict[str, Any], expected_revision: int
     manifest_path = Path(path)
     with _manifest_lock(manifest_path):
         existing = _read_manifest(manifest_path) if manifest_path.exists() else None
+        if existing is not None:
+            existing_errors = validate_manifest(existing)
+            if existing_errors:
+                raise ProtocolError("invalid input: existing manifest: " + "; ".join(existing_errors))
         _check_revision(existing, expected_revision)
 
         saved = dict(data)
@@ -228,6 +236,8 @@ def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
                     errors.append(f"next_actions[{index}] must have a string capability")
                 if not isinstance(item.get("journey_ids"), list) or not all(isinstance(v, str) for v in item.get("journey_ids", [])):
                     errors.append(f"next_actions[{index}] must have string journey_ids")
+                if "resume" in item and not isinstance(item["resume"], dict):
+                    errors.append(f"next_actions[{index}].resume must be an object")
 
 
 def _find_secret_keys(value: Any, errors: list[str]) -> None:
@@ -279,12 +289,31 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
 def _manifest_lock(path: Path):
     lock_path = path.with_name(f".{path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("w", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
+    with lock_path.open("a+b") as lock_file:
+        _acquire_lock(lock_file)
         try:
             yield
         finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
+            _release_lock(lock_file)
+
+
+def _acquire_lock(lock_file: Any) -> None:
+    if os.name == "nt":
+        lock_file.seek(0)
+        lock_file.write(b"\0")
+        lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+
+
+def _release_lock(lock_file: Any) -> None:
+    if os.name == "nt":
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def main(argv: list[str] | None = None) -> int:

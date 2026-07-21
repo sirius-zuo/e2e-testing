@@ -1,6 +1,7 @@
-import fcntl
 import json
 import multiprocessing
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -13,6 +14,10 @@ from protocol.v1.e2e_protocol import (
     transition,
     validate_manifest,
 )
+from protocol.v1.e2e_protocol import _manifest_lock
+
+
+PROTOCOL_SCRIPT = Path(__file__).parents[1] / "protocol" / "v1" / "e2e_protocol.py"
 
 
 def _transition_in_process(path, started, result):
@@ -75,13 +80,41 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(validate_manifest(manifest), [])
         self.assertEqual(manifest["next_actions"][0]["id"], "action-auth")
 
+    def test_next_action_resume_requires_an_object(self):
+        manifest = new_manifest("/workspace/app")
+        manifest["next_actions"] = [
+            {"id": "action-resume", "capability": "continue", "journey_ids": [], "resume": "later"},
+        ]
+        errors = validate_manifest(manifest)
+        self.assertTrue(any("resume" in error and "object" in error for error in errors))
+
+    def test_save_rejects_a_malformed_existing_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            path.write_text("{}")
+            with self.assertRaisesRegex(ProtocolError, "invalid input: existing manifest"):
+                save_manifest(path, new_manifest(tmp), expected_revision=None)
+
+    def test_cli_init_rejects_a_malformed_existing_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            path.write_text("{}")
+            completed = subprocess.run(
+                [sys.executable, str(PROTOCOL_SCRIPT), "init", "--project-root", tmp, "--output", str(path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertIn("invalid input: existing manifest", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+
     def test_save_waits_for_another_writer_holding_the_manifest_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "manifest.json"
             save_manifest(path, new_manifest(tmp), None)
-            lock_path = path.with_name(f".{path.name}.lock")
-            with lock_path.open("w") as lock_file:
-                fcntl.flock(lock_file, fcntl.LOCK_EX)
+            with _manifest_lock(path):
                 context = multiprocessing.get_context("spawn")
                 started = context.Queue()
                 result = context.Queue()
@@ -93,12 +126,12 @@ class ProtocolTests(unittest.TestCase):
                 started.get(timeout=5)
                 time.sleep(0.2)
                 self.assertEqual(json.loads(path.read_text())["revision"], 1)
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
-                outcome, value = result.get(timeout=5)
-                process.join(timeout=5)
-                self.assertEqual(process.exitcode, 0)
-                self.assertEqual(outcome, "saved")
-                self.assertEqual(value["revision"], 2)
+
+            outcome, value = result.get(timeout=5)
+            process.join(timeout=5)
+            self.assertEqual(process.exitcode, 0)
+            self.assertEqual(outcome, "saved")
+            self.assertEqual(value["revision"], 2)
 
 
 if __name__ == "__main__":
