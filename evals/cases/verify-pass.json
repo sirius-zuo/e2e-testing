@@ -10,6 +10,7 @@
     "required_journey_ids": ["journey-login"],
     "journey_traceability": ["journey-login"],
     "required_evidence_ids": ["evidence-verification"],
+    "required_execution_evidence_ids": ["evidence-verification"],
     "unchanged_globs": ["package.json", "playwright.config.ts", "tests/fixtures.ts", "tests/login.spec.ts"]
   }
 }

@@ -155,6 +155,16 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("next_actions[0].journey_ids contains an unknown journey: journey-missing", errors)
         self.assertIn("handoffs[0].journey_ids contains an unknown journey: journey-missing", errors)
 
+    def test_wrong_collection_types_return_stable_errors_without_iteration_failures(self):
+        for collection in (
+            "journeys", "tests", "evidence", "conflicts", "attempt_history",
+            "handoffs", "authorizations", "next_actions",
+        ):
+            with self.subTest(collection=collection):
+                manifest = new_manifest("/workspace/app")
+                manifest[collection] = None
+                self.assertIn(f"{collection} must be an array", validate_manifest(manifest))
+
     def test_product_handoff_refs_must_resolve_to_manifest_evidence_and_artifacts(self):
         manifest = new_manifest("/workspace/app", mode="verify")
         manifest["journeys"] = [{"id": "journey-checkout", "status": "failed"}]

@@ -105,6 +105,7 @@ convenience. Record one evidence item per run with exactly these fields:
 | --- | --- |
 | `id` | stable evidence ID |
 | `manifest_revision` | revision consumed by the run |
+| `phase` | current evaluator phase name (`verify`, `repair`, or a named resumed phase) |
 | `test_ids` | immutable selected IDs |
 | `command` | sanitized command invoked |
 | `target` | tier and configured target reference, never a secret value |

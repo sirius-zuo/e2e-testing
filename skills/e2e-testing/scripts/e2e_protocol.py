@@ -218,16 +218,20 @@ def _validate_budget(value: Any, errors: list[str]) -> None:
 
 
 def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
-    journey_ids = {
-        item.get("id")
-        for item in data.get("journeys", [])
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
+    collections: dict[str, list[Any]] = {}
     for name in ID_COLLECTIONS:
         items = data.get(name)
         if not isinstance(items, list):
             errors.append(f"{name} must be an array")
-            continue
+        else:
+            collections[name] = items
+
+    journey_ids = {
+        item.get("id")
+        for item in collections.get("journeys", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    for name, items in collections.items():
         ids: set[str] = set()
         for index, item in enumerate(items):
             if not isinstance(item, dict) or not isinstance(item.get("id"), str):

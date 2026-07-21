@@ -72,10 +72,7 @@ exit 0
 
 ## Commit
 
-Commit is pending. `git add` could not create the linked-worktree index lock in
-the filesystem sandbox; the required elevated staging request was rejected by
-the environment because its usage limit was reached. No staging workaround was
-attempted, and unrelated untracked files remain untouched.
+The first-pass corrections were subsequently committed as `74cd3d5`.
 
 ## Concerns and deferred work
 
@@ -160,3 +157,65 @@ exit 0
 
 No live Codex or Claude host was started. Existing unrelated untracked files and
 cache directories were preserved.
+
+---
+
+# Final targeted corrective pass — 2026-07-21
+
+## Scope
+
+This pass makes collection validation total for malformed collection types and
+binds verified/reverified acceptance to the explicitly required successful
+execution record for the current phase, manifest revision, and scoped tests.
+
+## RED evidence
+
+```text
+python3 -m unittest tests.test_protocol.ProtocolTests.test_wrong_collection_types_return_stable_errors_without_iteration_failures -v
+1 test: ERROR (journeys: null raised TypeError before collection validation)
+
+python3 -m unittest tests.test_evaluation_contracts.EvaluatorTests.test_verified_case_rejects_required_label_with_unrelated_successful_execution tests.test_evaluation_contracts.EvaluatorTests.test_verified_case_accepts_required_execution_bound_to_phase_revision_and_scope -v
+2 tests: 1 expected failure, 1 pass (the unrelated successful execution incorrectly satisfied the required label)
+
+python3 -m unittest tests.test_evaluation_contracts.FixtureContractTests.test_verified_case_expectations_name_the_execution_evidence_to_bind -v
+1 expected failure (verified cases did not declare required execution evidence IDs)
+
+python3 -m unittest tests.test_skill_contracts.SkillContractTests.test_playwright_adapter_reference_safety_contract -v
+1 expected failure (execution evidence omitted the evaluator phase field)
+```
+
+## GREEN evidence
+
+```text
+python3 -m unittest <five focused final-pass contract tests> -v
+5 tests: OK
+
+python3 scripts/sync_protocol.py --check
+exit 0
+
+python3 scripts/validate_skills.py
+validated: 2 skills
+
+python3 -m unittest discover
+78 tests: OK
+
+git diff --check
+exit 0
+```
+
+## Corrections and self-review
+
+- The canonical validator first establishes which of all eight collection fields
+  are arrays, emits one stable `<field> must be an array` diagnostic for every
+  malformed field, and only then derives journey IDs or iterates records.
+- The synchronized bundled validators inherit the same total validation path.
+- Verified expectations explicitly name their required execution evidence IDs.
+  Each named record must itself be a successful execution for the current phase
+  and exact manifest revision, and its selected IDs must cover every test scoped
+  by the required journeys.
+- A separate successful execution for an unrelated registered journey cannot
+  make an empty required evidence label pass.
+- Verify, repair, and resumed product-fix cases carry explicit binding metadata;
+  the Playwright evidence contract now records the current evaluator `phase`.
+- No live Codex or Claude host was started. Existing unrelated untracked files
+  and cache directories remain preserved.

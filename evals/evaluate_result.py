@@ -288,8 +288,40 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         return []
     test_ids = _ids(tests)
     diagnostics: list[str] = []
-    if status == "verified" and not any(_is_execution_evidence(item, test_ids) for item in evidence):
-        diagnostics.append("verified status requires successful selected-test execution evidence")
+    if status == "verified":
+        successful_execution = any(_is_execution_evidence(item, test_ids) for item in evidence)
+        if not successful_execution:
+            diagnostics.append("verified status requires successful selected-test execution evidence")
+        scoped_journey_ids = set(expect.get("required_journey_ids", []))
+        test_records = tests if isinstance(tests, list) else []
+        scoped_test_ids = {
+            item["id"]
+            for item in test_records
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and (not scoped_journey_ids or item.get("journey_id") in scoped_journey_ids)
+        }
+        expected_phase = expect.get("_phase_name", manifest.get("mode"))
+        expected_revision = manifest.get("revision")
+        evidence_by_id = {
+            item["id"]: item
+            for item in evidence
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        for required_id in expect.get("required_execution_evidence_ids", []):
+            item = evidence_by_id.get(required_id)
+            selected_ids = set(item.get("test_ids", [])) if isinstance(item, dict) else set()
+            if not (
+                _is_execution_evidence(item, test_ids)
+                and item.get("manifest_revision") == expected_revision
+                and not isinstance(item.get("manifest_revision"), bool)
+                and item.get("phase") == expected_phase
+                and scoped_test_ids <= selected_ids
+            ):
+                diagnostics.append(
+                    "required execution evidence is not bound to this phase, revision, and scoped tests: "
+                    f"{required_id}"
+                )
     if status == "unsupported-framework" and not any(
         isinstance(item, dict)
         and isinstance(item.get("framework"), str)
