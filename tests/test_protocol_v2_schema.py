@@ -15,7 +15,7 @@ class ProtocolV2SchemaTests(unittest.TestCase):
         self.assertEqual(schema["$id"], "urn:e2e-testing:protocol:2.0")
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(schema["required"], list(REQUIRED_FIELDS))
-        self.assertEqual(set(schema["properties"]["run"]["properties"]["status"]["enum"]), set(TRANSITIONS))
+        self.assertEqual(set(schema["$defs"]["run"]["properties"]["status"]["enum"]), set(TRANSITIONS))
         self.assertEqual(set(schema["$defs"]["surface"]["enum"]), SURFACES)
         self.assertNotIn("maxItems", schema["properties"]["systems"])
 

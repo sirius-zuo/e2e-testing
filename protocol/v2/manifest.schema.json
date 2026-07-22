@@ -11,37 +11,7 @@
   ],
   "properties": {
     "protocol_version": {"const": "2.0"},
-    "run": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "revision", "mode", "autonomy", "status", "created_at", "updated_at", "attempt_budget"],
-      "properties": {
-        "id": {"type": "string", "pattern": "^run-[a-z0-9-]+$"},
-        "revision": {"type": "integer", "minimum": 0},
-        "mode": {"enum": ["plan", "generate", "verify", "repair"]},
-        "autonomy": {
-          "type": "object", "additionalProperties": false,
-          "required": ["mode", "auto_repair"],
-          "properties": {"mode": {"enum": ["explicit", "auto"]}, "auto_repair": {"type": "boolean"}}
-        },
-        "status": {"enum": [
-          "initialized", "planned", "ready-for-adapter", "generated-unverified", "verifying",
-          "repair-ready", "handoff-required", "needs-clarification", "needs-authorization",
-          "verified", "blocked", "capability-unavailable", "extension-incompatible"
-        ]},
-        "created_at": {"type": ["string", "null"]},
-        "updated_at": {"type": ["string", "null"]},
-        "attempt_budget": {
-          "type": "object", "additionalProperties": false,
-          "required": ["repair", "verification", "wall_clock_seconds"],
-          "properties": {
-            "repair": {"type": "integer", "minimum": 0},
-            "verification": {"type": "integer", "minimum": 1},
-            "wall_clock_seconds": {"type": "integer", "minimum": 1}
-          }
-        }
-      }
-    },
+    "run": {"$ref": "#/$defs/run"},
     "systems": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/system"}},
     "journeys": {"type": "array", "items": {"$ref": "#/$defs/journey"}},
     "execution_units": {"type": "array", "items": {"$ref": "#/$defs/executionUnit"}},
