@@ -25,17 +25,24 @@ BUNDLED_PROTOCOL = ROOT / "skills" / "e2e-testing" / "scripts" / "e2e_protocol.p
 CHECKPOINT_RUN_ID = re.compile(r"run-[a-z0-9-]+$")
 
 
-def _load_validator():
+def _load_protocol():
     spec = importlib.util.spec_from_file_location("bundled_e2e_protocol", BUNDLED_PROTOCOL)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load bundled protocol validator: {BUNDLED_PROTOCOL}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    return module.validate_manifest
+    return module
 
 
-VALIDATE_MANIFEST = _load_validator()
+BUNDLED_PROTOCOL_MODULE = _load_protocol()
+
+
+def _validate_manifest(manifest: dict[str, Any]) -> list[str]:
+    return (
+        BUNDLED_PROTOCOL_MODULE.validate_manifest(manifest)
+        + BUNDLED_PROTOCOL_MODULE.validate_v2_policy(manifest)
+    )
 
 
 def _spawn_setup(command: str, workspace: Path) -> subprocess.Popen:
@@ -146,15 +153,29 @@ def _ids(items: Any) -> set[str]:
     return {item["id"] for item in items if isinstance(item, dict) and isinstance(item.get("id"), str)}
 
 
+def _run(manifest: dict[str, Any]) -> dict[str, Any]:
+    value = manifest.get("run")
+    return value if isinstance(value, dict) else {}
+
+
+def _systems(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    value = manifest.get("systems")
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _run_value(manifest: dict[str, Any], field: str) -> Any:
+    return _run(manifest).get(field)
+
+
 def _check_required_ids(manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
     diagnostics: list[str] = []
     collections = {
         "journey": "journeys",
-        "test": "tests",
+        "check": "checks",
         "evidence": "evidence",
         "handoff": "handoffs",
-        "next_action": "next_actions",
-        "attempt_history": "attempt_history",
+        "action": "actions",
+        "attempt": "attempts",
     }
     for label, collection in collections.items():
         for required_id in expect.get(f"required_{label}_ids", []):
@@ -167,19 +188,19 @@ def _check_traceability(manifest: dict[str, Any], expect: dict[str, Any]) -> lis
     required = expect.get("journey_traceability", [])
     if isinstance(required, dict):
         required = list(required)
-    tests_by_journey = {
+    checks_by_journey = {
         item.get("journey_id")
-        for item in manifest.get("tests", [])
+        for item in manifest.get("checks", [])
         if isinstance(item, dict) and isinstance(item.get("journey_id"), str)
     }
     return [
         f"missing journey traceability: {journey_id}"
         for journey_id in required
-        if journey_id not in tests_by_journey
+        if journey_id not in checks_by_journey
     ]
 
 
-def _is_execution_evidence(item: Any, test_ids: set[str]) -> bool:
+def _is_execution_evidence(item: Any, check_ids: set[str]) -> bool:
     if not isinstance(item, dict):
         return False
     command = item.get("command")
@@ -187,15 +208,15 @@ def _is_execution_evidence(item: Any, test_ids: set[str]) -> bool:
         return False
     if item.get("exit_code") != 0 or not isinstance(item.get("duration_ms"), (int, float)):
         return False
-    selected = item.get("test_ids")
+    selected = item.get("check_ids")
     outcomes = item.get("outcomes")
     environment = item.get("execution_environment")
-    if not isinstance(selected, list) or not selected or not all(isinstance(test_id, str) for test_id in selected):
+    if not isinstance(selected, list) or not selected or not all(isinstance(check_id, str) for check_id in selected):
         return False
-    if not set(selected) <= test_ids or not isinstance(outcomes, list):
+    if not set(selected) <= check_ids or not isinstance(outcomes, list):
         return False
     outcome_ids = {
-        outcome.get("test_id")
+        outcome.get("check_id")
         for outcome in outcomes
         if isinstance(outcome, dict) and outcome.get("status") == "passed"
     }
@@ -210,7 +231,7 @@ def _is_execution_evidence(item: Any, test_ids: set[str]) -> bool:
     )
 
 
-def _is_failed_execution_evidence(item: Any, test_ids: set[str]) -> bool:
+def _is_failed_execution_evidence(item: Any, check_ids: set[str]) -> bool:
     if not isinstance(item, dict):
         return False
     command = item.get("command")
@@ -224,15 +245,15 @@ def _is_failed_execution_evidence(item: Any, test_ids: set[str]) -> bool:
         or isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration < 0
     ):
         return False
-    selected = item.get("test_ids")
+    selected = item.get("check_ids")
     outcomes = item.get("outcomes")
     environment = item.get("execution_environment")
-    if not isinstance(selected, list) or not selected or not all(isinstance(test_id, str) for test_id in selected):
+    if not isinstance(selected, list) or not selected or not all(isinstance(check_id, str) for check_id in selected):
         return False
-    if not set(selected) <= test_ids or not isinstance(outcomes, list):
+    if not set(selected) <= check_ids or not isinstance(outcomes, list):
         return False
     failed_ids = {
-        outcome.get("test_id")
+        outcome.get("check_id")
         for outcome in outcomes
         if isinstance(outcome, dict) and outcome.get("status") == "failed"
     }
@@ -279,30 +300,30 @@ def _linked_classification(
 
 
 def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
-    status = manifest.get("status")
+    status = _run_value(manifest, "status")
     evidence = manifest.get("evidence")
-    tests = manifest.get("tests")
+    checks = manifest.get("checks")
     handoffs = manifest.get("handoffs")
-    actions = manifest.get("next_actions")
+    actions = manifest.get("actions")
     if not isinstance(evidence, list):
         return []
-    test_ids = _ids(tests)
+    check_ids = _ids(checks)
     diagnostics: list[str] = []
     if status == "verified":
-        successful_execution = any(_is_execution_evidence(item, test_ids) for item in evidence)
+        successful_execution = any(_is_execution_evidence(item, check_ids) for item in evidence)
         if not successful_execution:
             diagnostics.append("verified status requires successful selected-test execution evidence")
         scoped_journey_ids = set(expect.get("required_journey_ids", []))
-        test_records = tests if isinstance(tests, list) else []
-        scoped_test_ids = {
+        check_records = checks if isinstance(checks, list) else []
+        scoped_check_ids = {
             item["id"]
-            for item in test_records
+            for item in check_records
             if isinstance(item, dict)
             and isinstance(item.get("id"), str)
             and (not scoped_journey_ids or item.get("journey_id") in scoped_journey_ids)
         }
-        expected_phase = expect.get("_phase_name", manifest.get("mode"))
-        expected_revision = manifest.get("revision")
+        expected_phase = expect.get("_phase_name", _run_value(manifest, "mode"))
+        expected_revision = _run_value(manifest, "revision")
         valid_final_revision = type(expected_revision) is int and expected_revision >= 1
         if not valid_final_revision:
             diagnostics.append(
@@ -315,9 +336,9 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         }
         for required_id in expect.get("required_execution_evidence_ids", []):
             item = evidence_by_id.get(required_id)
-            selected_ids = set(item.get("test_ids", [])) if isinstance(item, dict) else set()
-            if not _is_execution_evidence(item, test_ids) or not (
-                item.get("phase") == expected_phase and scoped_test_ids <= selected_ids
+            selected_ids = set(item.get("check_ids", [])) if isinstance(item, dict) else set()
+            if not _is_execution_evidence(item, check_ids) or not (
+                item.get("phase") == expected_phase and scoped_check_ids <= selected_ids
             ):
                 diagnostics.append(
                     "required execution evidence is not bound to this phase, revision, and scoped tests: "
@@ -336,7 +357,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
                     "required execution evidence is not bound to this phase, revision, and scoped tests: "
                     f"{required_id}"
                 )
-    if status == "unsupported-framework" and not any(
+    if status == "capability-unavailable" and not any(
         isinstance(item, dict)
         and isinstance(item.get("framework"), str)
         and item["framework"]
@@ -345,7 +366,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         and item.get("read_only") is True
         for item in evidence
     ):
-        diagnostics.append("missing unsupported-framework detection evidence")
+        diagnostics.append("missing capability-unavailable framework detection evidence")
     if status == "handoff-required":
         evidence_ids = _ids(evidence)
         failed_evidence_ids = {
@@ -353,7 +374,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
             for item in evidence
             if isinstance(item, dict)
             and isinstance(item.get("id"), str)
-            and _is_failed_execution_evidence(item, test_ids)
+            and _is_failed_execution_evidence(item, check_ids)
         }
         classification_ids = {
             item["id"]
@@ -413,12 +434,12 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         )
         if not any(_classification(item, "authorization-required") for item in evidence) or not valid_action:
             diagnostics.append("needs-authorization status requires authorization classification and actionable handoff evidence")
-    if manifest.get("mode") == "repair" and status == "verified":
-        attempts = manifest.get("attempt_history")
+    if _run_value(manifest, "mode") == "repair" and status == "verified":
+        attempts = manifest.get("attempts")
         valid_attempt = any(
             isinstance(item, dict)
-            and isinstance(item.get("test_ids"), list)
-            and bool(item["test_ids"])
+            and isinstance(item.get("check_ids"), list)
+            and bool(item["check_ids"])
             and isinstance(item.get("allowed_paths"), list)
             and bool(item["allowed_paths"])
             and isinstance(item.get("assertion_comparison"), str)
@@ -428,7 +449,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         if not any(_classification(item, "test-defect") for item in evidence) or not valid_attempt:
             diagnostics.append("repair verification requires classified repair and bounded attempt evidence")
     if status == "blocked" and "evidence-budget-exhausted" in expect.get("required_evidence_ids", []):
-        attempts = _ids(manifest.get("attempt_history"))
+        attempts = _ids(manifest.get("attempts"))
         valid_budget_evidence = any(
             isinstance(item, dict)
             and item.get("id") == "evidence-budget-exhausted"
@@ -516,13 +537,15 @@ def _check_continuity(state_dir: Path | None, case: dict[str, Any], manifest: di
     ):
         return [f"invalid phase checkpoint: {previous_phase}"]
     diagnostics: list[str] = []
-    if manifest.get("run_id") != checkpoint.get("run_id"):
+    run_id = _run_value(manifest, "id")
+    revision = _run_value(manifest, "revision")
+    if run_id != checkpoint.get("run_id"):
         diagnostics.append(
-            f"run continuity: expected {checkpoint.get('run_id')}, found {manifest.get('run_id')}"
+            f"run continuity: expected {checkpoint.get('run_id')}, found {run_id}"
         )
-    if not isinstance(manifest.get("revision"), int) or manifest["revision"] <= checkpoint.get("revision", -1):
+    if not isinstance(revision, int) or revision <= checkpoint.get("revision", -1):
         diagnostics.append(
-            f"revision continuity: expected > {checkpoint.get('revision')}, found {manifest.get('revision')}"
+            f"revision continuity: expected > {checkpoint.get('revision')}, found {revision}"
         )
     handoffs = _ids(manifest.get("handoffs"))
     for handoff_id in checkpoint.get("handoff_ids", []):
@@ -588,8 +611,8 @@ def _save_checkpoint(state_dir: Path, case: dict[str, Any], phase: str, manifest
     state_dir.mkdir(parents=True, exist_ok=True)
     path = _checkpoint_path(state_dir, case["id"], phase)
     checkpoint = {
-        "run_id": manifest["run_id"],
-        "revision": manifest["revision"],
+        "run_id": _run_value(manifest, "id"),
+        "revision": _run_value(manifest, "revision"),
         "handoff_ids": sorted(_ids(manifest.get("handoffs"))),
     }
     path.write_text(json.dumps(checkpoint, sort_keys=True), encoding="utf-8")
@@ -632,20 +655,20 @@ def evaluate(
         return sorted(dict.fromkeys(diagnostics))
     assert manifest is not None
 
-    validation_errors = VALIDATE_MANIFEST(manifest)
+    validation_errors = _validate_manifest(manifest)
     if validation_errors:
         diagnostics.append("invalid manifest: " + "; ".join(sorted(validation_errors)))
         return sorted(dict.fromkeys(diagnostics))
-    if expected_status is not None and manifest.get("status") != expected_status:
+    if expected_status is not None and _run_value(manifest, "status") != expected_status:
         diagnostics.append(
-            f"manifest status: expected {expected_status}, found {manifest.get('status')}"
+            f"manifest status: expected {expected_status}, found {_run_value(manifest, 'status')}"
         )
     expected_mode = expect.get("mode", case["mode"])
-    if manifest.get("mode") != expected_mode:
-        diagnostics.append(f"manifest mode: expected {expected_mode}, found {manifest.get('mode')}")
+    if _run_value(manifest, "mode") != expected_mode:
+        diagnostics.append(f"manifest mode: expected {expected_mode}, found {_run_value(manifest, 'mode')}")
     expected_autonomy = case.get("autonomy", {"mode": "explicit", "auto_repair": False})
-    if manifest.get("autonomy") != expected_autonomy:
-        diagnostics.append(f"manifest autonomy: expected {expected_autonomy}, found {manifest.get('autonomy')}")
+    if _run_value(manifest, "autonomy") != expected_autonomy:
+        diagnostics.append(f"manifest autonomy: expected {expected_autonomy}, found {_run_value(manifest, 'autonomy')}")
     diagnostics.extend(_check_required_ids(manifest, expect))
     diagnostics.extend(_check_traceability(manifest, expect))
     diagnostics.extend(_check_status_evidence(manifest, expect))
