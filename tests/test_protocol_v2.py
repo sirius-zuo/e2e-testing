@@ -1,7 +1,33 @@
 import copy
+import json
+import multiprocessing
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
+from pathlib import Path
 
-from protocol.v2.e2e_protocol import new_manifest, validate_manifest, validate_v2_policy
+from protocol.v2.e2e_protocol import (
+    ProtocolError,
+    _manifest_lock,
+    load_manifest,
+    new_manifest,
+    save_manifest,
+    transition,
+    validate_manifest,
+    validate_v2_policy,
+)
+
+PROTOCOL_V2_SCRIPT = Path(__file__).parents[1] / "protocol" / "v2" / "e2e_protocol.py"
+
+
+def _transition_v2_in_process(path, started, result):
+    started.put(None)
+    try:
+        result.put(("saved", transition(path, 1, "planned", [])))
+    except ProtocolError as error:
+        result.put(("error", str(error)))
 
 
 class ProtocolV2ShapeTests(unittest.TestCase):
@@ -170,6 +196,89 @@ class ProtocolV2ShapeTests(unittest.TestCase):
         self.assertIn("evidence[0].classification.evidence_ids contains an unknown evidence ID: evidence-missing", errors)
         self.assertIn("handoffs[0].evidence_ids contains an unknown evidence ID: evidence-missing", errors)
         self.assertIn("handoffs[0].artifact_refs contains an unknown artifact ID: artifact-missing", errors)
+
+
+class ProtocolV2PersistenceTests(unittest.TestCase):
+    def test_save_increments_nested_revision_and_rejects_stale_writer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".e2e" / "manifest.json"
+            saved = save_manifest(
+                path,
+                new_manifest(tmp, timestamp="2026-07-21T00:00:00Z"),
+                expected_revision=None,
+                timestamp="2026-07-21T00:00:01Z",
+            )
+            self.assertEqual(saved["run"]["revision"], 1)
+            moved = transition(
+                path, 1, "planned", [], timestamp="2026-07-21T00:00:02Z",
+            )
+            self.assertEqual(moved["run"]["revision"], 2)
+            with self.assertRaisesRegex(ProtocolError, "revision conflict"):
+                transition(path, 1, "ready-for-adapter", [])
+
+    def test_evidence_and_attempts_cannot_be_rewritten_or_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            initial = new_manifest(tmp, timestamp="2026-07-21T00:00:00Z")
+            initial["evidence"] = [{"id": "evidence-a", "kind": "source-derived"}]
+            initial["attempts"] = [{"id": "attempt-a", "status": "recorded"}]
+            saved = save_manifest(path, initial, None, timestamp="2026-07-21T00:00:01Z")
+            candidate = json.loads(json.dumps(saved))
+            candidate["evidence"][0]["kind"] = "rewritten"
+            candidate["attempts"] = []
+
+            with self.assertRaisesRegex(ProtocolError, "append-only collection changed: evidence"):
+                save_manifest(path, candidate, 1)
+
+            attempts_only = json.loads(json.dumps(saved))
+            attempts_only["attempts"] = []
+            with self.assertRaisesRegex(ProtocolError, "append-only collection changed: attempts"):
+                save_manifest(path, attempts_only, 1)
+
+    def test_candidate_revision_must_match_the_revision_it_consumed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            saved = save_manifest(path, new_manifest(tmp, timestamp="2026-07-21T00:00:00Z"), None)
+            candidate = json.loads(json.dumps(saved))
+            candidate["run"]["revision"] = 0
+            with self.assertRaisesRegex(ProtocolError, "candidate revision conflict"):
+                save_manifest(path, candidate, expected_revision=1)
+
+    def test_cli_init_validate_and_transition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            initialized = subprocess.run(
+                [sys.executable, str(PROTOCOL_V2_SCRIPT), "init", "--project-root", tmp, "--output", str(path)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            self.assertEqual(json.loads(initialized.stdout)["protocol_version"], "2.0")
+
+            validated = subprocess.run(
+                [sys.executable, str(PROTOCOL_V2_SCRIPT), "validate", str(path)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(validated.returncode, 0, validated.stderr)
+            self.assertEqual(json.loads(validated.stdout), {"errors": []})
+
+    def test_save_waits_for_the_manifest_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            save_manifest(path, new_manifest(tmp, timestamp="2026-07-21T00:00:00Z"), None)
+            with _manifest_lock(path):
+                context = multiprocessing.get_context("spawn")
+                started = context.Queue()
+                result = context.Queue()
+                process = context.Process(target=_transition_v2_in_process, args=(str(path), started, result))
+                process.start()
+                started.get(timeout=5)
+                time.sleep(0.2)
+                self.assertEqual(load_manifest(path)["run"]["revision"], 1)
+            outcome, value = result.get(timeout=5)
+            process.join(timeout=5)
+            self.assertEqual(process.exitcode, 0)
+            self.assertEqual(outcome, "saved")
+            self.assertEqual(value["run"]["revision"], 2)
 
 
 if __name__ == "__main__":

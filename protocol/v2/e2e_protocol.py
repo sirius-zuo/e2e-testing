@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import argparse
+import json
+import os
 import re
+import sys
+import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 class ProtocolError(Exception):
@@ -39,6 +51,22 @@ RAW_SECRET_COMPACT_SUFFIXES = (
     "password", "passphrase", "token", "accesstoken", "refreshtoken", "secret",
     "clientsecret", "apikey", "privatekey", "credential", "credentials", "secretvalue",
 )
+TRANSITIONS = {
+    "initialized": {"planned", "needs-clarification", "capability-unavailable", "extension-incompatible"},
+    "planned": {"ready-for-adapter", "needs-clarification", "blocked"},
+    "ready-for-adapter": {"generated-unverified", "capability-unavailable", "extension-incompatible", "blocked"},
+    "generated-unverified": {"verifying", "needs-authorization", "blocked"},
+    "verifying": {"verified", "repair-ready", "handoff-required", "needs-clarification", "needs-authorization", "blocked"},
+    "repair-ready": {"generated-unverified", "blocked"},
+    "handoff-required": {"verifying", "blocked"},
+    "needs-authorization": {"verifying", "blocked"},
+    "needs-clarification": {"planned", "blocked"},
+    "verified": set(),
+    "blocked": set(),
+    "capability-unavailable": set(),
+    "extension-incompatible": set(),
+}
+APPEND_ONLY_COLLECTIONS = ("evidence", "attempts")
 
 
 def _utc_now() -> str:
@@ -140,6 +168,8 @@ def _validate_run(value: Any, errors: list[str]) -> None:
     _integer_at_least(value.get("revision"), 0, "run.revision", errors)
     if value.get("mode") not in MODES:
         errors.append("run.mode is invalid")
+    if value.get("status") not in TRANSITIONS:
+        errors.append("run.status is invalid")
     autonomy = value.get("autonomy")
     if not isinstance(autonomy, dict) or set(autonomy) != {"mode", "auto_repair"}:
         errors.append("run.autonomy fields are invalid")
@@ -499,3 +529,200 @@ def validate_v2_policy(data: Any) -> list[str]:
     if surfaces and isinstance(systems[0], dict) and systems[0].get("primary_surface") != next(iter(surfaces)):
         errors.append("systems[0].primary_surface does not match execution unit surface")
     return errors
+
+
+def load_manifest(path: str | Path) -> dict[str, Any]:
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"invalid input: cannot read manifest: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ProtocolError("invalid input: manifest must be an object")
+    return value
+
+
+def _revision(data: dict[str, Any] | None) -> int | None:
+    if data is None or not isinstance(data.get("run"), dict):
+        return None
+    return data["run"].get("revision")
+
+
+def _validate_append_only(existing: dict[str, Any], candidate: dict[str, Any]) -> None:
+    for name in APPEND_ONLY_COLLECTIONS:
+        old = existing.get(name, [])
+        new = candidate.get(name, [])
+        if not isinstance(new, list) or new[:len(old)] != old:
+            raise ProtocolError(f"append-only collection changed: {name}")
+
+
+def _validate_unknown_extensions_preserved(
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+    registry: ExtensionRegistry | None,
+) -> None:
+    candidate_by_id = {
+        item.get("id"): item for item in candidate.get("extensions", []) if isinstance(item, dict)
+    }
+    for item in existing.get("extensions", []):
+        if not isinstance(item, dict):
+            continue
+        supported = False
+        if registry is not None:
+            status, _ = registry.resolve(item.get("namespace"), item.get("version"))
+            supported = status == "supported"
+        if not supported and candidate_by_id.get(item.get("id")) != item:
+            raise ProtocolError(f"unknown extension changed: {item.get('id')}")
+
+
+PolicyValidator = Callable[[Any], list[str]]
+
+
+def save_manifest(
+    path: str | Path,
+    data: dict[str, Any],
+    expected_revision: int | None,
+    registry: ExtensionRegistry | None = None,
+    timestamp: str | None = None,
+    policy_validator: PolicyValidator | None = validate_v2_policy,
+) -> dict[str, Any]:
+    manifest_path = Path(path)
+    with _manifest_lock(manifest_path):
+        existing = load_manifest(manifest_path) if manifest_path.exists() else None
+        if existing is not None:
+            existing_errors = validate_manifest(existing, registry)
+            if existing_errors:
+                raise ProtocolError("invalid input: existing manifest: " + "; ".join(existing_errors))
+        actual = _revision(existing)
+        if actual != expected_revision:
+            raise ProtocolError(f"revision conflict: expected {expected_revision}, found {actual}")
+        supplied = _revision(data)
+        required_supplied = 0 if existing is None else expected_revision
+        if supplied != required_supplied:
+            raise ProtocolError(f"candidate revision conflict: expected {required_supplied}, found {supplied}")
+        candidate = json.loads(json.dumps(data))
+        if existing is not None:
+            _validate_append_only(existing, candidate)
+            _validate_unknown_extensions_preserved(existing, candidate, registry)
+        candidate["run"]["revision"] = 1 if existing is None else actual + 1
+        candidate["run"]["updated_at"] = timestamp or _utc_now()
+        errors = validate_manifest(candidate, registry)
+        if policy_validator is not None:
+            errors.extend(policy_validator(candidate))
+        if errors:
+            raise ProtocolError("invalid input: " + "; ".join(errors))
+        _atomic_write(manifest_path, candidate)
+        return candidate
+
+
+def transition(
+    path: str | Path,
+    expected_revision: int,
+    status: str,
+    actions: list[dict[str, Any]],
+    registry: ExtensionRegistry | None = None,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    existing = load_manifest(path)
+    current = existing["run"]["status"]
+    if status not in TRANSITIONS.get(current, set()):
+        raise ProtocolError(f"invalid transition: {current} -> {status}")
+    candidate = json.loads(json.dumps(existing))
+    candidate["run"]["status"] = status
+    candidate["actions"] = actions
+    return save_manifest(path, candidate, expected_revision, registry, timestamp, validate_v2_policy)
+
+
+def _atomic_write(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent,
+        prefix=f".{path.name}.", suffix=".tmp", delete=False,
+    ) as temporary:
+        json.dump(data, temporary, indent=2, sort_keys=True)
+        temporary.write("\n")
+        temporary_path = temporary.name
+    try:
+        os.replace(temporary_path, path)
+    except OSError:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def _manifest_lock(path: Path):
+    lock_path = path.with_name(f".{path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        _acquire_lock(lock_file)
+        try:
+            yield
+        finally:
+            _release_lock(lock_file)
+
+
+def _acquire_lock(lock_file: Any) -> None:
+    if os.name == "nt":
+        lock_file.seek(0)
+        lock_file.write(b"\0")
+        lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+
+def _release_lock(lock_file: Any) -> None:
+    if os.name == "nt":
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="e2e_protocol.py")
+    commands = parser.add_subparsers(dest="command", required=True)
+    init = commands.add_parser("init")
+    init.add_argument("--project-root", required=True)
+    init.add_argument("--mode", default="generate")
+    init.add_argument("--autonomy", default="explicit")
+    init.add_argument("--output")
+    validate = commands.add_parser("validate")
+    validate.add_argument("manifest")
+    move = commands.add_parser("transition")
+    move.add_argument("manifest")
+    move.add_argument("--expected-revision", type=int, required=True)
+    move.add_argument("--status", required=True)
+    move.add_argument("--actions")
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "init":
+            manifest = new_manifest(args.project_root, args.mode, args.autonomy)
+            output = Path(args.output) if args.output else Path(args.project_root) / ".e2e" / "manifest.json"
+            result = save_manifest(output, manifest, None)
+        elif args.command == "validate":
+            manifest = load_manifest(args.manifest)
+            errors = validate_manifest(manifest) + validate_v2_policy(manifest)
+            result = {"errors": errors}
+            print(json.dumps(result))
+            return 2 if errors else 0
+        else:
+            actions = []
+            if args.actions:
+                actions = json.loads(Path(args.actions).read_text(encoding="utf-8"))
+            result = transition(args.manifest, args.expected_revision, args.status, actions)
+    except ProtocolError as exc:
+        print(str(exc), file=sys.stderr)
+        return 3 if str(exc).startswith("revision conflict") else 2
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"invalid input: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

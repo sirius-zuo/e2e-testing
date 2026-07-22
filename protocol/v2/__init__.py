@@ -5,12 +5,16 @@ from .e2e_protocol import (
     ExtensionSupport,
     ProtocolError,
     extension_issues,
+    load_manifest,
     new_manifest,
+    save_manifest,
+    transition,
     validate_manifest,
     validate_v2_policy,
 )
 
 __all__ = [
     "ExtensionRegistry", "ExtensionSupport", "ProtocolError",
-    "extension_issues", "new_manifest", "validate_manifest", "validate_v2_policy",
+    "extension_issues", "load_manifest", "new_manifest", "save_manifest",
+    "transition", "validate_manifest", "validate_v2_policy",
 ]
