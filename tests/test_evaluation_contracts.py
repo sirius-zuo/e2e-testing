@@ -165,6 +165,8 @@ class FixtureContractTests(unittest.TestCase):
                 case = json.loads(path.read_text())
                 self.assertTrue(REQUIRED_CASE_FIELDS <= set(case))
                 self.assertTrue((FIXTURES / case["fixture"]).is_dir())
+                self.assertEqual(case["entry_skill"], "e2e-testing")
+                self.assertNotIn("e2e-web-playwright", json.dumps(case))
 
     def test_verified_case_expectations_name_the_execution_evidence_to_bind(self):
         verify = json.loads((CASES / "verify-pass.json").read_text())
@@ -827,7 +829,8 @@ class HostHarnessTests(unittest.TestCase):
                 self._run(host, keep_results=True)
                 workspace = next((self.results / host / "greenfield-source").glob("*/workspace"))
                 self.assertTrue((workspace / skill_root / "e2e-testing" / "SKILL.md").is_file())
-                self.assertTrue((workspace / skill_root / "e2e-web-playwright" / "SKILL.md").is_file())
+                self.assertTrue((workspace / skill_root / "e2e-web" / "SKILL.md").is_file())
+                self.assertFalse((workspace / skill_root / "e2e-web-playwright").exists())
 
     def test_each_run_uses_a_fresh_fixture_copy_and_never_the_source_fixture(self):
         _, first, _, _ = self._run(keep_results=True)

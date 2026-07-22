@@ -8,7 +8,7 @@
   "expect": {
     "manifest_status": "blocked",
     "required_journey_ids": ["journey-checkout"],
-    "required_attempt_history_ids": ["attempt-repair-1"],
+    "required_attempt_ids": ["attempt-repair-1"],
     "required_evidence_ids": ["evidence-budget-exhausted"],
     "unchanged_globs": ["package.json", "playwright.config.ts", ".e2e-policy.json", "tests/**"]
   }
