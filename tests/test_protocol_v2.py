@@ -7,10 +7,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from protocol.v2.e2e_protocol import (
     ProtocolError,
     _manifest_lock,
+    initialize_manifest,
     load_manifest,
     new_manifest,
     save_manifest,
@@ -20,6 +22,7 @@ from protocol.v2.e2e_protocol import (
 )
 
 PROTOCOL_V2_SCRIPT = Path(__file__).parents[1] / "protocol" / "v2" / "e2e_protocol.py"
+ROOT = Path(__file__).parents[1]
 
 
 def _transition_v2_in_process(path, started, result):
@@ -279,6 +282,93 @@ class ProtocolV2PersistenceTests(unittest.TestCase):
             self.assertEqual(process.exitcode, 0)
             self.assertEqual(outcome, "saved")
             self.assertEqual(value["run"]["revision"], 2)
+
+
+class Protocol2InitializationTests(unittest.TestCase):
+    def test_initializes_when_manifest_does_not_exist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / ".e2e" / "manifest.json"
+            saved = initialize_manifest(path, str(root), timestamp="2026-07-22T00:00:00Z")
+            self.assertEqual(saved["protocol_version"], "2.0")
+            self.assertEqual(saved["run"]["revision"], 1)
+            self.assertEqual(load_manifest(path), saved)
+
+    def test_replaces_exact_protocol_1_without_migrating_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / ".e2e" / "manifest.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps({
+                "protocol_version": "1.0",
+                "run_id": "run-legacy",
+                "evidence": [{"id": "evidence-legacy"}],
+            }))
+            saved = initialize_manifest(
+                path,
+                str(root),
+                replace_protocol_1=True,
+                timestamp="2026-07-22T00:00:00Z",
+            )
+            self.assertEqual(saved["protocol_version"], "2.0")
+            self.assertEqual(saved["run"]["revision"], 1)
+            self.assertNotEqual(saved["run"]["id"], "run-legacy")
+            self.assertNotIn("evidence-legacy", json.dumps(saved))
+            self.assertEqual(validate_manifest(saved) + validate_v2_policy(saved), [])
+
+    def test_refuses_protocol_1_without_explicit_replacement_flag(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "manifest.json"
+            original = b'{"protocol_version":"1.0"}\n'
+            path.write_bytes(original)
+            with self.assertRaisesRegex(ProtocolError, "existing Protocol 1 manifest requires replacement"):
+                initialize_manifest(path, str(root))
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_preserves_malformed_and_unknown_manifests(self):
+        for original in (b"{not-json\n", b'{"protocol_version":"9.0"}\n'):
+            with self.subTest(original=original):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    path = root / "manifest.json"
+                    path.write_bytes(original)
+                    with self.assertRaises((json.JSONDecodeError, ProtocolError)):
+                        initialize_manifest(path, str(root), replace_protocol_1=True)
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_atomic_write_failure_preserves_protocol_1_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "manifest.json"
+            original = b'{"protocol_version":"1.0"}\n'
+            path.write_bytes(original)
+            with mock.patch("protocol.v2.e2e_protocol._atomic_write", side_effect=OSError("disk full")):
+                with self.assertRaisesRegex(OSError, "disk full"):
+                    initialize_manifest(path, str(root), replace_protocol_1=True)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_cli_replaces_protocol_1_only_with_flag(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / ".e2e" / "manifest.json"
+            path.parent.mkdir()
+            path.write_text('{"protocol_version":"1.0"}\n')
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "protocol/v2/e2e_protocol.py"),
+                    "init",
+                    "--project-root", str(root),
+                    "--output", str(path),
+                    "--replace-protocol-1",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(json.loads(completed.stdout)["protocol_version"], "2.0")
 
 
 if __name__ == "__main__":

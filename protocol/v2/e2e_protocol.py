@@ -577,6 +577,39 @@ def _validate_unknown_extensions_preserved(
 PolicyValidator = Callable[[Any], list[str]]
 
 
+def initialize_manifest(
+    path: str | Path,
+    project_root: str,
+    mode: str = "generate",
+    autonomy: str = "explicit",
+    replace_protocol_1: bool = False,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Create fresh Protocol 2 state, optionally replacing exact Protocol 1 state."""
+    manifest_path = Path(path)
+    fresh = new_manifest(project_root, mode, autonomy, timestamp)
+    with _manifest_lock(manifest_path):
+        if manifest_path.exists():
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                raise ProtocolError("existing manifest must be an object")
+            version = existing.get("protocol_version")
+            if version == "1.0":
+                if not replace_protocol_1:
+                    raise ProtocolError("existing Protocol 1 manifest requires replacement")
+            else:
+                raise ProtocolError(f"refusing to replace existing manifest with protocol_version {version!r}")
+
+        saved = json.loads(json.dumps(fresh))
+        saved["run"]["revision"] = 1
+        saved["run"]["updated_at"] = timestamp or _utc_now()
+        errors = validate_manifest(saved) + validate_v2_policy(saved)
+        if errors:
+            raise ProtocolError("invalid input: " + "; ".join(errors))
+        _atomic_write(manifest_path, saved)
+        return saved
+
+
 def save_manifest(
     path: str | Path,
     data: dict[str, Any],
@@ -690,6 +723,11 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--mode", default="generate")
     init.add_argument("--autonomy", default="explicit")
     init.add_argument("--output")
+    init.add_argument(
+        "--replace-protocol-1",
+        action="store_true",
+        help="atomically discard an existing Protocol 1 manifest and initialize Protocol 2",
+    )
     validate = commands.add_parser("validate")
     validate.add_argument("manifest")
     move = commands.add_parser("transition")
@@ -700,9 +738,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            manifest = new_manifest(args.project_root, args.mode, args.autonomy)
             output = Path(args.output) if args.output else Path(args.project_root) / ".e2e" / "manifest.json"
-            result = save_manifest(output, manifest, None)
+            result = initialize_manifest(
+                output,
+                args.project_root,
+                args.mode,
+                args.autonomy,
+                replace_protocol_1=args.replace_protocol_1,
+            )
         elif args.command == "validate":
             manifest = load_manifest(args.manifest)
             errors = validate_manifest(manifest) + validate_v2_policy(manifest)
