@@ -1,11 +1,9 @@
 # E2E Testing
 
-Portable Agent Skills for planning, generating, verifying, and safely repairing browser end-to-end tests.
+Portable Agent Skills for repository-native web end-to-end testing on Protocol 2.
 
-The project separates orchestration from framework execution:
-
-- [`e2e-testing`](skills/e2e-testing/SKILL.md) discovers journeys, applies safety policy, and routes work through a portable manifest.
-- [`e2e-web-playwright`](skills/e2e-web-playwright/SKILL.md) implements Playwright generation, verification, failure classification, and bounded test repair.
+- [`e2e-testing`](skills/e2e-testing/SKILL.md) plans externally observable web journeys, applies shared safety policy, and coordinates durable Protocol 2 actions and handoffs.
+- [`e2e-web`](skills/e2e-web/SKILL.md) implements Playwright-backed planning, generation, selected verification, failure classification, and bounded test repair behind a surface-oriented public boundary.
 
 ## Installation
 
@@ -18,9 +16,9 @@ Keep each skill directory intact so its bundled references and protocol utility 
 
 ## Quick start
 
-Ask the orchestrator to generate browser E2E coverage for the current project. Generation is the default and ends as `generated-unverified`; request verification separately when the target and credentials are authorized.
+Ask `e2e-testing` to generate web E2E coverage for the current project. Generation is the default and always ends `generated-unverified`; verification is a separate step that requires selected-check evidence and target/credential authorization before it may run.
 
-Invoke `e2e-web-playwright` directly only when the repository is already known to use Playwright and orchestration is unnecessary.
+Invoke `e2e-web` directly only when the repository's web E2E boundary is already known and orchestration is unnecessary.
 
 ## Modes
 
@@ -39,8 +37,9 @@ Read each skill's safety and workflow references before using credentials or non
 
 ## Repository layout
 
-- `skills/`: independently installable skills.
-- `protocol/v1/`: canonical portable manifest schema and utility.
+- `skills/e2e-testing/`: orchestration skill — discovers journeys, applies safety policy, and routes work through Protocol 2.
+- `skills/e2e-web/`: Playwright-backed execution skill — generation, selected verification, failure classification, and bounded repair.
+- `protocol/v2/`: canonical portable manifest schema and utility.
 - `evals/cases/`: behavioral case contracts.
 - [`evals/fixtures/`](evals/fixtures/README.md): deterministic fixture repositories and integrity baselines.
 - [`evals/HOST_EVALUATION.md`](evals/HOST_EVALUATION.md): authorized host-harness procedure.
