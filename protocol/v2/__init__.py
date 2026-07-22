@@ -5,6 +5,7 @@ from .e2e_protocol import (
     ExtensionSupport,
     ProtocolError,
     extension_issues,
+    initialize_manifest,
     load_manifest,
     new_manifest,
     save_manifest,
@@ -15,6 +16,6 @@ from .e2e_protocol import (
 
 __all__ = [
     "ExtensionRegistry", "ExtensionSupport", "ProtocolError",
-    "extension_issues", "load_manifest", "new_manifest", "save_manifest",
+    "extension_issues", "initialize_manifest", "load_manifest", "new_manifest", "save_manifest",
     "transition", "validate_manifest", "validate_v2_policy",
 ]

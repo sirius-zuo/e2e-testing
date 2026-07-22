@@ -1,4 +1,4 @@
-"""Version 1 manifest protocol for end-to-end testing runs."""
+"""Protocol 2 kernel for portable end-to-end testing runs."""
 
 from __future__ import annotations
 
@@ -10,8 +10,10 @@ import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 if os.name == "nt":
     import msvcrt
@@ -20,13 +22,39 @@ else:
 
 
 class ProtocolError(Exception):
-    """Raised when a manifest cannot be safely created or updated."""
+    """Raised when a Protocol 2 manifest cannot be safely handled."""
 
 
+PROTOCOL_VERSION = "2.0"
+MODES = {"plan", "generate", "verify", "repair"}
+AUTONOMY_MODES = {"explicit", "auto"}
+TARGET_TIERS = {"local", "ephemeral", "staging", "production", "unspecified"}
+SURFACES = {"web", "service", "mobile", "desktop"}
+BOUNDARY_STATUSES = {"unresolved", "declared", "needs-clarification"}
+REQUIRED_FIELDS = (
+    "protocol_version", "run", "systems", "journeys", "execution_units",
+    "checks", "evidence", "actions", "handoffs", "authorizations",
+    "attempts", "extensions",
+)
+COLLECTION_FIELDS = REQUIRED_FIELDS[2:]
+PUBLIC_INTERFACE_KINDS = {"web", "rest", "graphql", "grpc", "websocket", "queue", "stream"}
+ID_COLLECTIONS = (
+    "systems", "journeys", "execution_units", "checks", "evidence",
+    "actions", "handoffs", "authorizations", "attempts", "extensions",
+)
+REFERENCE_KEY_SUFFIXES = ("_ref", "_reference", "_id", "_identifier")
+COMPACT_REFERENCE_SUFFIXES = ("ref", "reference", "id", "identifier")
+RAW_SECRET_KEY_SUFFIX = re.compile(
+    r"(?:^|_)(?:password|passphrase|token|secret(?:_value)?|api_key|private_key|credentials?)$"
+)
+RAW_SECRET_COMPACT_SUFFIXES = (
+    "password", "passphrase", "token", "accesstoken", "refreshtoken", "secret",
+    "clientsecret", "apikey", "privatekey", "credential", "credentials", "secretvalue",
+)
 TRANSITIONS = {
-    "initialized": {"planned", "needs-clarification", "unsupported-framework", "protocol-incompatible"},
+    "initialized": {"planned", "needs-clarification", "capability-unavailable", "extension-incompatible"},
     "planned": {"ready-for-adapter", "needs-clarification", "blocked"},
-    "ready-for-adapter": {"generated-unverified", "unsupported-framework", "blocked"},
+    "ready-for-adapter": {"generated-unverified", "capability-unavailable", "extension-incompatible", "blocked"},
     "generated-unverified": {"verifying", "needs-authorization", "blocked"},
     "verifying": {"verified", "repair-ready", "handoff-required", "needs-clarification", "needs-authorization", "blocked"},
     "repair-ready": {"generated-unverified", "blocked"},
@@ -35,132 +63,92 @@ TRANSITIONS = {
     "needs-clarification": {"planned", "blocked"},
     "verified": set(),
     "blocked": set(),
-    "unsupported-framework": set(),
-    "protocol-incompatible": set(),
+    "capability-unavailable": set(),
+    "extension-incompatible": set(),
 }
-
-MODES = {"plan", "generate", "verify", "repair"}
-AUTONOMY_MODES = {"explicit", "auto"}
-TARGET_TIERS = {"local", "ephemeral", "staging", "production", "unspecified"}
-REFERENCE_KEY_SUFFIXES = ("_ref", "_reference", "_id", "_identifier")
-COMPACT_REFERENCE_SUFFIXES = ("ref", "reference", "id", "identifier")
-RAW_SECRET_KEY_SUFFIX = re.compile(
-    r"(?:^|_)(?:password|passphrase|token|secret(?:_value)?|api_key|private_key|credentials?)$"
-)
-RAW_SECRET_COMPACT_SUFFIXES = (
-    "password", "passphrase", "token", "accesstoken", "refreshtoken", "secret", "clientsecret",
-    "apikey", "privatekey", "credential", "credentials", "secretvalue",
-)
-ID_COLLECTIONS = (
-    "journeys", "tests", "evidence", "conflicts", "attempt_history",
-    "handoffs", "authorizations", "next_actions",
-)
-REQUIRED_FIELDS = (
-    "protocol_version", "run_id", "revision", "mode", "autonomy", "status",
-    "project", "target", "journeys", "tests", "evidence", "conflicts",
-    "attempt_budget", "attempt_history", "handoffs", "authorizations", "next_actions",
-)
+APPEND_ONLY_COLLECTIONS = ("evidence", "attempts")
 
 
-def new_manifest(project_root: str, mode: str = "generate", autonomy: str = "explicit") -> dict[str, Any]:
-    """Create a new, revision-zero manifest with safe defaults."""
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def new_manifest(
+    project_root: str,
+    mode: str = "generate",
+    autonomy: str = "explicit",
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    now = timestamp or _utc_now()
     manifest = {
-        "protocol_version": "1.0",
-        "run_id": f"run-{uuid.uuid4()}",
-        "revision": 0,
-        "mode": mode,
-        "autonomy": {"mode": autonomy, "auto_repair": False},
-        "status": "initialized",
-        "project": {"root": str(project_root), "framework": None},
-        "target": {"tier": "unspecified", "base_url_ref": None, "credentials_ref": None},
+        "protocol_version": PROTOCOL_VERSION,
+        "run": {
+            "id": f"run-{uuid.uuid4()}",
+            "revision": 0,
+            "mode": mode,
+            "autonomy": {"mode": autonomy, "auto_repair": False},
+            "status": "initialized",
+            "created_at": now,
+            "updated_at": now,
+            "attempt_budget": {"repair": 0, "verification": 1, "wall_clock_seconds": 300},
+        },
+        "systems": [{
+            "id": "system-primary",
+            "project_root": str(project_root),
+            "primary_surface": None,
+            "boundary": {
+                "status": "unresolved",
+                "actors": [],
+                "public_interfaces": [],
+                "evidence_ids": [],
+            },
+            "target": {
+                "tier": "unspecified",
+                "endpoint_refs": [],
+                "credential_refs": [],
+                "mutation_policy": {"namespace_ref": None, "allowed_classes": []},
+            },
+        }],
         "journeys": [],
-        "tests": [],
+        "execution_units": [],
+        "checks": [],
         "evidence": [],
-        "conflicts": [],
-        "attempt_budget": {"repair": 0, "verification": 1, "wall_clock_seconds": 300},
-        "attempt_history": [],
+        "actions": [],
         "handoffs": [],
         "authorizations": [],
-        "next_actions": [],
+        "attempts": [],
+        "extensions": [],
     }
-    errors = validate_manifest(manifest)
+    errors = validate_manifest(manifest) + validate_v2_policy(manifest)
     if errors:
         raise ProtocolError("invalid input: " + "; ".join(errors))
     return manifest
 
 
-def validate_manifest(data: Any) -> list[str]:
-    """Return protocol-validation errors, without mutating *data*."""
+def validate_manifest(data: Any, registry: Any = None) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["manifest must be an object"]
-
     for field in REQUIRED_FIELDS:
         if field not in data:
             errors.append(f"missing required field: {field}")
-    unexpected = set(data) - set(REQUIRED_FIELDS)
-    errors.extend(f"unexpected top-level field: {field}" for field in sorted(unexpected))
-
-    if data.get("protocol_version") != "1.0":
-        errors.append("protocol_version must be 1.0")
-    run_id = data.get("run_id")
-    if not isinstance(run_id, str) or not re.fullmatch(r"run-[a-z0-9-]+", run_id):
-        errors.append("run_id must match ^run-[a-z0-9-]+$")
-    _integer_at_least(data.get("revision"), 0, "revision", errors)
-    if data.get("mode") not in MODES:
-        errors.append("mode is invalid")
-    if data.get("status") not in TRANSITIONS:
-        errors.append("status is invalid")
-
-    _validate_autonomy(data.get("autonomy"), errors)
-    _validate_project(data.get("project"), errors)
-    _validate_target(data.get("target"), errors)
-    _validate_budget(data.get("attempt_budget"), errors)
-    _validate_collections(data, errors)
+    errors.extend(
+        f"unexpected top-level field: {field}"
+        for field in sorted(set(data) - set(REQUIRED_FIELDS))
+    )
+    if data.get("protocol_version") != PROTOCOL_VERSION:
+        errors.append("protocol_version must be 2.0")
+    _validate_run(data.get("run"), errors)
+    _validate_systems(data.get("systems"), errors)
+    for field in COLLECTION_FIELDS[1:]:
+        if not isinstance(data.get(field), list):
+            errors.append(f"{field} must be an array")
+    _validate_collections_and_references(data, errors)
+    _validate_boundary_references(data, errors)
+    _validate_evidence_references(data, errors)
+    _validate_extension_envelopes(data, errors, registry)
     _find_secret_keys(data, errors)
     return errors
-
-
-def save_manifest(path: str | Path, data: dict[str, Any], expected_revision: int | None) -> dict[str, Any]:
-    """Validate and atomically save *data* if its stored revision matches."""
-    manifest_path = Path(path)
-    with _manifest_lock(manifest_path):
-        existing = _read_manifest(manifest_path) if manifest_path.exists() else None
-        if existing is not None:
-            existing_errors = validate_manifest(existing)
-            if existing_errors:
-                raise ProtocolError("invalid input: existing manifest: " + "; ".join(existing_errors))
-        _check_revision(existing, expected_revision)
-
-        saved = dict(data)
-        saved["revision"] = 1 if existing is None else existing["revision"] + 1
-        errors = validate_manifest(saved)
-        if errors:
-            raise ProtocolError("invalid input: " + "; ".join(errors))
-        _atomic_write(manifest_path, saved)
-    return saved
-
-
-def transition(
-    path: str | Path,
-    expected_revision: int,
-    status: str,
-    next_actions: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Atomically move an existing manifest to an allowed next status."""
-    manifest_path = Path(path)
-    if not manifest_path.exists():
-        raise ProtocolError("invalid input: manifest does not exist")
-    existing = _read_manifest(manifest_path)
-    _check_revision(existing, expected_revision)
-    current_status = existing.get("status")
-    if status not in TRANSITIONS.get(current_status, set()):
-        raise ProtocolError(f"invalid transition: {current_status} -> {status}")
-
-    updated = dict(existing)
-    updated["status"] = status
-    updated["next_actions"] = next_actions
-    return save_manifest(manifest_path, updated, expected_revision)
 
 
 def _integer_at_least(value: Any, minimum: int, name: str, errors: list[str]) -> None:
@@ -168,169 +156,357 @@ def _integer_at_least(value: Any, minimum: int, name: str, errors: list[str]) ->
         errors.append(f"{name} must be an integer >= {minimum}")
 
 
-def _validate_autonomy(value: Any, errors: list[str]) -> None:
+def _validate_run(value: Any, errors: list[str]) -> None:
+    required = {"id", "revision", "mode", "autonomy", "status", "created_at", "updated_at", "attempt_budget"}
     if not isinstance(value, dict):
-        errors.append("autonomy must be an object")
+        errors.append("run must be an object")
         return
-    if set(value) != {"mode", "auto_repair"}:
-        errors.append("autonomy must contain only mode and auto_repair")
-    if value.get("mode") not in AUTONOMY_MODES:
-        errors.append("autonomy.mode is invalid")
-    if not isinstance(value.get("auto_repair"), bool):
-        errors.append("autonomy.auto_repair must be a boolean")
+    if set(value) != required:
+        errors.append("run fields are invalid")
+    if not isinstance(value.get("id"), str) or not re.fullmatch(r"run-[a-z0-9-]+", value["id"]):
+        errors.append("run.id must match ^run-[a-z0-9-]+$")
+    _integer_at_least(value.get("revision"), 0, "run.revision", errors)
+    if value.get("mode") not in MODES:
+        errors.append("run.mode is invalid")
+    if value.get("status") not in TRANSITIONS:
+        errors.append("run.status is invalid")
+    autonomy = value.get("autonomy")
+    if not isinstance(autonomy, dict) or set(autonomy) != {"mode", "auto_repair"}:
+        errors.append("run.autonomy fields are invalid")
+    else:
+        if autonomy.get("mode") not in AUTONOMY_MODES:
+            errors.append("run.autonomy.mode is invalid")
+        if not isinstance(autonomy.get("auto_repair"), bool):
+            errors.append("run.autonomy.auto_repair must be a boolean")
+    budget = value.get("attempt_budget")
+    if not isinstance(budget, dict) or set(budget) != {"repair", "verification", "wall_clock_seconds"}:
+        errors.append("run.attempt_budget fields are invalid")
+    else:
+        _integer_at_least(budget.get("repair"), 0, "run.attempt_budget.repair", errors)
+        _integer_at_least(budget.get("verification"), 1, "run.attempt_budget.verification", errors)
+        _integer_at_least(budget.get("wall_clock_seconds"), 1, "run.attempt_budget.wall_clock_seconds", errors)
+    for field in ("created_at", "updated_at"):
+        timestamp = value.get(field)
+        if timestamp is not None and (
+            not isinstance(timestamp, str)
+            or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+Z", timestamp)
+        ):
+            errors.append(f"run.{field} must be an RFC3339 string or null")
 
 
-def _validate_project(value: Any, errors: list[str]) -> None:
-    if not isinstance(value, dict):
-        errors.append("project must be an object")
+def _validate_systems(value: Any, errors: list[str]) -> None:
+    if not isinstance(value, list):
+        errors.append("systems must be an array")
         return
-    if not isinstance(value.get("root"), str):
-        errors.append("project.root must be a string")
-    if "framework" in value and value["framework"] is not None and not isinstance(value["framework"], str):
-        errors.append("project.framework must be a string or null")
-
-
-def _validate_target(value: Any, errors: list[str]) -> None:
-    if not isinstance(value, dict):
-        errors.append("target must be an object")
+    if not value:
+        errors.append("systems must contain at least one system")
         return
-    allowed = {"tier", "base_url_ref", "credentials_ref"}
-    if set(value) - allowed:
-        errors.append("target contains unsupported fields")
-    if value.get("tier") not in TARGET_TIERS:
-        errors.append("target.tier is invalid")
-    for key in ("base_url_ref", "credentials_ref"):
-        if key in value and value[key] is not None and not isinstance(value[key], str):
-            errors.append(f"target.{key} must be a string or null")
-    if "base_url_ref" not in value:
-        errors.append("missing required field: target.base_url_ref")
+    for index, system in enumerate(value):
+        label = f"systems[{index}]"
+        if not isinstance(system, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        if not isinstance(system.get("id"), str):
+            errors.append(f"{label}.id must be a string")
+        if not isinstance(system.get("project_root"), str):
+            errors.append(f"{label}.project_root must be a string")
+        if system.get("primary_surface") is not None and system.get("primary_surface") not in SURFACES:
+            errors.append(f"{label}.primary_surface is invalid")
+        boundary = system.get("boundary")
+        if not isinstance(boundary, dict):
+            errors.append(f"{label}.boundary must be an object")
+        elif boundary.get("status") not in BOUNDARY_STATUSES:
+            errors.append(f"{label}.boundary.status is invalid")
+        target = system.get("target")
+        if not isinstance(target, dict):
+            errors.append(f"{label}.target must be an object")
+        elif target.get("tier") not in TARGET_TIERS:
+            errors.append(f"{label}.target.tier is invalid")
+        if set(system) != {"id", "project_root", "primary_surface", "boundary", "target"}:
+            errors.append(f"{label} fields are invalid")
+        if isinstance(boundary, dict):
+            if set(boundary) != {"status", "actors", "public_interfaces", "evidence_ids"}:
+                errors.append(f"{label}.boundary fields are invalid")
+            if not isinstance(boundary.get("actors"), list) or not all(isinstance(actor, str) for actor in boundary.get("actors", [])):
+                errors.append(f"{label}.boundary.actors must be an array of strings")
+        if isinstance(target, dict):
+            if set(target) != {"tier", "endpoint_refs", "credential_refs", "mutation_policy"}:
+                errors.append(f"{label}.target fields are invalid")
+            for field in ("endpoint_refs", "credential_refs"):
+                refs = target.get(field)
+                if not isinstance(refs, list) or not all(isinstance(ref, str) for ref in refs):
+                    errors.append(f"{label}.target.{field} must be an array of strings")
+            mutation = target.get("mutation_policy")
+            if not isinstance(mutation, dict):
+                errors.append(f"{label}.target.mutation_policy must be an object")
+            else:
+                if set(mutation) != {"namespace_ref", "allowed_classes"}:
+                    errors.append(f"{label}.target.mutation_policy fields are invalid")
+                if mutation.get("namespace_ref") is not None and not isinstance(mutation.get("namespace_ref"), str):
+                    errors.append(f"{label}.target.mutation_policy.namespace_ref must be a string or null")
+                allowed = mutation.get("allowed_classes")
+                if not isinstance(allowed, list) or not all(isinstance(item, str) for item in allowed):
+                    errors.append(f"{label}.target.mutation_policy.allowed_classes must be an array of strings")
 
 
-def _validate_budget(value: Any, errors: list[str]) -> None:
-    if not isinstance(value, dict):
-        errors.append("attempt_budget must be an object")
+def _id_map(data: dict[str, Any], name: str, errors: list[str]) -> set[str]:
+    items = data.get(name)
+    if not isinstance(items, list):
+        return set()
+    result: set[str] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            errors.append(f"{name}[{index}] must have a string id")
+            continue
+        if item["id"] in result:
+            errors.append(f"duplicate id in {name}: {item['id']}")
+        result.add(item["id"])
+    return result
+
+
+def _unknown_refs(
+    values: Any,
+    known: set[str],
+    label: str,
+    errors: list[str],
+) -> None:
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        errors.append(f"{label} must be an array of strings")
         return
-    if set(value) != {"repair", "verification", "wall_clock_seconds"}:
-        errors.append("attempt_budget must contain repair, verification, and wall_clock_seconds")
-    _integer_at_least(value.get("repair"), 0, "attempt_budget.repair", errors)
-    _integer_at_least(value.get("verification"), 1, "attempt_budget.verification", errors)
-    _integer_at_least(value.get("wall_clock_seconds"), 1, "attempt_budget.wall_clock_seconds", errors)
+    for value in values:
+        if value not in known:
+            errors.append(f"{label} contains an unknown evidence ID: {value}")
 
 
-def _validate_collections(data: dict[str, Any], errors: list[str]) -> None:
-    collections: dict[str, list[Any]] = {}
-    for name in ID_COLLECTIONS:
-        items = data.get(name)
-        if not isinstance(items, list):
-            errors.append(f"{name} must be an array")
+def _validate_collections_and_references(data: dict[str, Any], errors: list[str]) -> None:
+    ids = {name: _id_map(data, name, errors) for name in ID_COLLECTIONS}
+    systems = data.get("systems") if isinstance(data.get("systems"), list) else []
+    journeys = data.get("journeys") if isinstance(data.get("journeys"), list) else []
+    units = data.get("execution_units") if isinstance(data.get("execution_units"), list) else []
+    checks = data.get("checks") if isinstance(data.get("checks"), list) else []
+
+    for index, journey in enumerate(journeys):
+        if not isinstance(journey, dict):
+            continue
+        system_id = journey.get("system_id")
+        if system_id not in ids["systems"]:
+            errors.append(
+                f"journeys[{index}].system_id does not reference a registered system: {system_id}"
+            )
+
+    for index, unit in enumerate(units):
+        if not isinstance(unit, dict):
+            continue
+        if unit.get("system_id") not in ids["systems"]:
+            errors.append(f"execution_units[{index}].system_id is unknown")
+        if unit.get("surface") not in SURFACES:
+            errors.append(f"execution_units[{index}].surface is invalid")
+        if not isinstance(unit.get("capability"), str):
+            errors.append(f"execution_units[{index}].capability must be a string")
+        extension_id = unit.get("extension_id")
+        if extension_id is not None and extension_id not in ids["extensions"]:
+            errors.append(f"execution_units[{index}].extension_id is unknown")
+    for index, check in enumerate(checks):
+        if not isinstance(check, dict):
+            continue
+        journey_id = check.get("journey_id")
+        unit_id = check.get("execution_unit_id")
+        if journey_id not in ids["journeys"]:
+            errors.append(
+                f"checks[{index}].journey_id does not reference a registered journey: {journey_id}"
+            )
+        if unit_id not in ids["execution_units"]:
+            errors.append(
+                f"checks[{index}].execution_unit_id does not reference a registered execution unit: {unit_id}"
+            )
+
+    for index, action in enumerate(data.get("actions", [])):
+        if not isinstance(action, dict):
+            continue
+        if not isinstance(action.get("capability"), str):
+            errors.append(f"actions[{index}].capability must be a string")
+        values = action.get("journey_ids")
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            errors.append(f"actions[{index}].journey_ids must be an array of strings")
         else:
-            collections[name] = items
+            for value in values:
+                if value not in ids["journeys"]:
+                    errors.append(f"actions[{index}].journey_ids contains an unknown journey: {value}")
+    for index, handoff in enumerate(data.get("handoffs", [])):
+        if not isinstance(handoff, dict) or "journey_ids" not in handoff:
+            continue
+        values = handoff["journey_ids"]
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            errors.append(f"handoffs[{index}].journey_ids must be an array of strings")
+        else:
+            for value in values:
+                if value not in ids["journeys"]:
+                    errors.append(f"handoffs[{index}].journey_ids contains an unknown journey: {value}")
 
-    journey_ids = {
-        item.get("id")
-        for item in collections.get("journeys", [])
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
-    for name, items in collections.items():
-        ids: set[str] = set()
-        for index, item in enumerate(items):
-            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                errors.append(f"{name}[{index}] must have a string id")
+
+def _validate_boundary_references(data: dict[str, Any], errors: list[str]) -> None:
+    evidence_ids = _id_map(data, "evidence", [])
+    systems = data.get("systems") if isinstance(data.get("systems"), list) else []
+    for system_index, system in enumerate(systems):
+        if not isinstance(system, dict):
+            continue
+        boundary = system.get("boundary")
+        if not isinstance(boundary, dict):
+            continue
+        boundary_label = f"systems[{system_index}].boundary"
+        _unknown_refs(boundary.get("evidence_ids"), evidence_ids, f"{boundary_label}.evidence_ids", errors)
+        interfaces = boundary.get("public_interfaces")
+        if not isinstance(interfaces, list):
+            errors.append(f"{boundary_label}.public_interfaces must be an array")
+            continue
+        for interface_index, interface in enumerate(interfaces):
+            label = f"{boundary_label}.public_interfaces[{interface_index}]"
+            if not isinstance(interface, dict):
+                errors.append(f"{label} must be an object")
                 continue
-            item_id = item["id"]
-            if item_id in ids:
-                errors.append(f"duplicate id in {name}: {item_id}")
-            ids.add(item_id)
-            if name == "journeys" and not isinstance(item.get("status"), str):
-                errors.append(f"journeys[{index}] must have a string status")
-            if name == "tests":
-                if not isinstance(item.get("journey_id"), str):
-                    errors.append(f"tests[{index}] must have a string journey_id")
-                elif item["journey_id"] not in journey_ids:
-                    errors.append(
-                        f"tests[{index}].journey_id does not reference a registered journey: {item['journey_id']}"
-                    )
-                if not isinstance(item.get("status"), str):
-                    errors.append(f"tests[{index}] must have a string status")
-            if name == "next_actions":
-                if not isinstance(item.get("capability"), str):
-                    errors.append(f"next_actions[{index}] must have a string capability")
-                if not isinstance(item.get("journey_ids"), list) or not all(isinstance(v, str) for v in item.get("journey_ids", [])):
-                    errors.append(f"next_actions[{index}] must have string journey_ids")
-                elif any(journey_id not in journey_ids for journey_id in item["journey_ids"]):
-                    for journey_id in item["journey_ids"]:
-                        if journey_id not in journey_ids:
-                            errors.append(
-                                f"next_actions[{index}].journey_ids contains an unknown journey: {journey_id}"
-                            )
-                if "resume" in item and not isinstance(item["resume"], dict):
-                    errors.append(f"next_actions[{index}].resume must be an object")
-            if name == "handoffs" and "journey_ids" in item:
-                if not isinstance(item["journey_ids"], list) or not all(isinstance(v, str) for v in item["journey_ids"]):
-                    errors.append(f"handoffs[{index}].journey_ids must be an array of strings")
-                else:
-                    for journey_id in item["journey_ids"]:
-                        if journey_id not in journey_ids:
-                            errors.append(
-                                f"handoffs[{index}].journey_ids contains an unknown journey: {journey_id}"
-                            )
-    _validate_evidence_references(data, errors)
+            if interface.get("kind") not in PUBLIC_INTERFACE_KINDS:
+                errors.append(f"{label}.kind is invalid")
+            _unknown_refs(interface.get("evidence_ids"), evidence_ids, f"{label}.evidence_ids", errors)
 
 
 def _validate_evidence_references(data: dict[str, Any], errors: list[str]) -> None:
-    evidence = data.get("evidence")
-    handoffs = data.get("handoffs")
-    if not isinstance(evidence, list) or not isinstance(handoffs, list):
-        return
-    evidence_ids = {
-        item.get("id")
-        for item in evidence
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
+    evidence = data.get("evidence") if isinstance(data.get("evidence"), list) else []
+    handoffs = data.get("handoffs") if isinstance(data.get("handoffs"), list) else []
+    evidence_ids = {item.get("id") for item in evidence if isinstance(item, dict) and isinstance(item.get("id"), str)}
     artifact_ids = {
-        artifact.get("id")
-        for item in evidence
-        if isinstance(item, dict) and isinstance(item.get("artifacts"), list)
-        for artifact in item["artifacts"]
-        if isinstance(artifact, dict) and isinstance(artifact.get("id"), str)
+        artifact.get("id") for item in evidence if isinstance(item, dict)
+        for artifact in item.get("artifacts", []) if isinstance(artifact, dict) and isinstance(artifact.get("id"), str)
     }
     for index, item in enumerate(evidence):
-        if not isinstance(item, dict) or not isinstance(item.get("classification"), dict):
-            continue
-        references = item["classification"].get("evidence_ids")
-        if isinstance(references, list):
-            if not all(isinstance(reference, str) for reference in references):
-                errors.append(f"evidence[{index}].classification.evidence_ids must be an array of strings")
-            for reference in references:
-                if isinstance(reference, str) and reference not in evidence_ids:
-                    errors.append(
-                        f"evidence[{index}].classification.evidence_ids contains an unknown evidence ID: {reference}"
-                    )
+        classification = item.get("classification") if isinstance(item, dict) else None
+        if isinstance(classification, dict) and "evidence_ids" in classification:
+            _unknown_refs(classification["evidence_ids"], evidence_ids, f"evidence[{index}].classification.evidence_ids", errors)
     for index, item in enumerate(handoffs):
         if not isinstance(item, dict):
             continue
-        evidence_references = item.get("evidence_ids")
-        if isinstance(evidence_references, list):
-            if not all(isinstance(reference, str) for reference in evidence_references):
-                errors.append(f"handoffs[{index}].evidence_ids must be an array of strings")
-            for reference in evidence_references:
-                if isinstance(reference, str) and reference not in evidence_ids:
-                    errors.append(f"handoffs[{index}].evidence_ids contains an unknown evidence ID: {reference}")
-        artifact_references = item.get("artifact_refs")
-        if isinstance(artifact_references, list):
-            if not all(isinstance(reference, str) for reference in artifact_references):
+        if "evidence_ids" in item:
+            _unknown_refs(item["evidence_ids"], evidence_ids, f"handoffs[{index}].evidence_ids", errors)
+        if "artifact_refs" in item:
+            refs = item["artifact_refs"]
+            if not isinstance(refs, list) or not all(isinstance(ref, str) for ref in refs):
                 errors.append(f"handoffs[{index}].artifact_refs must be an array of strings")
-            for reference in artifact_references:
-                if isinstance(reference, str) and reference not in artifact_ids:
-                    errors.append(f"handoffs[{index}].artifact_refs contains an unknown artifact ID: {reference}")
+            else:
+                for ref in refs:
+                    if ref not in artifact_ids:
+                        errors.append(f"handoffs[{index}].artifact_refs contains an unknown artifact ID: {ref}")
+
+
+ExtensionValidator = Callable[[Any], list[str]]
+
+
+def _version_tuple(value: str) -> tuple[int, int]:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", value):
+        raise ValueError(f"invalid extension version: {value}")
+    major, minor = value.split(".")
+    return int(major), int(minor)
+
+
+@dataclass(frozen=True)
+class ExtensionSupport:
+    namespace: str
+    minimum_version: str
+    maximum_version: str
+    validator: ExtensionValidator
+
+    def contains(self, version: str) -> bool:
+        return _version_tuple(self.minimum_version) <= _version_tuple(version) <= _version_tuple(self.maximum_version)
+
+
+class ExtensionRegistry:
+    def __init__(self) -> None:
+        self._supports: dict[str, list[ExtensionSupport]] = {}
+
+    def register(self, support: ExtensionSupport) -> None:
+        minimum = _version_tuple(support.minimum_version)
+        maximum = _version_tuple(support.maximum_version)
+        if minimum > maximum:
+            raise ValueError("extension support minimum exceeds maximum")
+        entries = self._supports.setdefault(support.namespace, [])
+        for existing in entries:
+            if minimum <= _version_tuple(existing.maximum_version) and _version_tuple(existing.minimum_version) <= maximum:
+                raise ValueError(f"overlapping extension support: {support.namespace}")
+        entries.append(support)
+
+    def resolve(self, namespace: str, version: str) -> tuple[str, ExtensionSupport | None]:
+        entries = self._supports.get(namespace)
+        if not entries:
+            return "capability-unavailable", None
+        try:
+            for support in entries:
+                if support.contains(version):
+                    return "supported", support
+        except ValueError:
+            return "extension-incompatible", None
+        return "extension-incompatible", None
+
+    def validate(self, extension: dict[str, Any]) -> list[str]:
+        status, support = self.resolve(extension["namespace"], extension["version"])
+        return [] if status != "supported" or support is None else support.validator(extension["data"])
+
+
+def extension_issues(data: dict[str, Any], registry: ExtensionRegistry) -> list[dict[str, str]]:
+    issues = []
+    for extension in data.get("extensions", []):
+        if not isinstance(extension, dict):
+            continue
+        namespace = extension.get("namespace")
+        version = extension.get("version")
+        if not isinstance(namespace, str) or not isinstance(version, str):
+            continue
+        status, _ = registry.resolve(namespace, version)
+        if status != "supported":
+            issues.append({
+                "extension_id": extension.get("id", ""),
+                "namespace": namespace,
+                "version": version,
+                "status": status,
+            })
+    return issues
+
+
+def _validate_extension_envelopes(
+    data: dict[str, Any],
+    errors: list[str],
+    registry: ExtensionRegistry | None,
+) -> None:
+    extensions = data.get("extensions")
+    if not isinstance(extensions, list):
+        return
+    required = {"id", "namespace", "version", "owner", "data"}
+    for index, extension in enumerate(extensions):
+        if not isinstance(extension, dict):
+            continue
+        if set(extension) != required:
+            errors.append(f"extensions[{index}] fields are invalid")
+        namespace = extension.get("namespace")
+        version = extension.get("version")
+        if not isinstance(namespace, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+", namespace):
+            errors.append(f"extensions[{index}].namespace is invalid")
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", version):
+            errors.append(f"extensions[{index}].version is invalid")
+        if not isinstance(extension.get("owner"), str):
+            errors.append(f"extensions[{index}].owner must be a string")
+        if not isinstance(extension.get("data"), dict):
+            errors.append(f"extensions[{index}].data must be an object")
+        elif registry is not None and isinstance(namespace, str) and isinstance(version, str):
+            errors.extend(registry.validate(extension))
 
 
 def _find_secret_keys(value: Any, errors: list[str]) -> None:
     if isinstance(value, dict):
         for key, nested in value.items():
-            normalized_key = _normalize_key(key)
-            compact_key = normalized_key.replace("_", "")
-            if not _is_reference_key(normalized_key, compact_key) and _is_raw_secret_key(normalized_key, compact_key):
+            normalized = re.sub(r"[^A-Za-z0-9]+", "_", key)
+            normalized = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", normalized)
+            normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", normalized).lower().strip("_")
+            compact = normalized.replace("_", "")
+            is_reference = normalized.endswith(REFERENCE_KEY_SUFFIXES) or compact.endswith(COMPACT_REFERENCE_SUFFIXES)
+            is_secret = bool(RAW_SECRET_KEY_SUFFIX.search(normalized)) or compact.endswith(RAW_SECRET_COMPACT_SUFFIXES)
+            if is_secret and not is_reference:
                 errors.append(f"secret value key is forbidden: {key}")
             _find_secret_keys(nested, errors)
     elif isinstance(value, list):
@@ -338,25 +514,26 @@ def _find_secret_keys(value: Any, errors: list[str]) -> None:
             _find_secret_keys(nested, errors)
 
 
-def _normalize_key(key: str) -> str:
-    """Normalize key separators and word boundaries for secret-key matching."""
-    normalized = re.sub(r"[^A-Za-z0-9]+", "_", key)
-    normalized = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", normalized)
-    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", normalized)
-    return normalized.lower().strip("_")
+def validate_v2_policy(data: Any) -> list[str]:
+    if not isinstance(data, dict):
+        return ["manifest must be an object"]
+    errors: list[str] = []
+    systems = data.get("systems")
+    if not isinstance(systems, list) or len(systems) != 1:
+        errors.append("systems must contain exactly one system in V2")
+        return errors
+    units = data.get("execution_units") if isinstance(data.get("execution_units"), list) else []
+    surfaces = {unit.get("surface") for unit in units if isinstance(unit, dict) and unit.get("surface") in SURFACES}
+    if len(surfaces) > 1:
+        errors.append("execution_units use more than one primary surface in V2")
+    if surfaces and isinstance(systems[0], dict) and systems[0].get("primary_surface") != next(iter(surfaces)):
+        errors.append("systems[0].primary_surface does not match execution unit surface")
+    return errors
 
 
-def _is_reference_key(normalized_key: str, compact_key: str) -> bool:
-    return normalized_key.endswith(REFERENCE_KEY_SUFFIXES) or compact_key.endswith(COMPACT_REFERENCE_SUFFIXES)
-
-
-def _is_raw_secret_key(normalized_key: str, compact_key: str) -> bool:
-    return bool(RAW_SECRET_KEY_SUFFIX.search(normalized_key)) or compact_key.endswith(RAW_SECRET_COMPACT_SUFFIXES)
-
-
-def _read_manifest(path: Path) -> dict[str, Any]:
+def load_manifest(path: str | Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ProtocolError(f"invalid input: cannot read manifest: {exc}") from exc
     if not isinstance(value, dict):
@@ -364,16 +541,135 @@ def _read_manifest(path: Path) -> dict[str, Any]:
     return value
 
 
-def _check_revision(existing: dict[str, Any] | None, expected_revision: int | None) -> None:
-    actual = None if existing is None else existing.get("revision")
-    if actual != expected_revision:
-        raise ProtocolError(f"revision conflict: expected {expected_revision}, found {actual}")
+def _revision(data: dict[str, Any] | None) -> int | None:
+    if data is None or not isinstance(data.get("run"), dict):
+        return None
+    return data["run"].get("revision")
+
+
+def _validate_append_only(existing: dict[str, Any], candidate: dict[str, Any]) -> None:
+    for name in APPEND_ONLY_COLLECTIONS:
+        old = existing.get(name, [])
+        new = candidate.get(name, [])
+        if not isinstance(new, list) or new[:len(old)] != old:
+            raise ProtocolError(f"append-only collection changed: {name}")
+
+
+def _validate_unknown_extensions_preserved(
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+    registry: ExtensionRegistry | None,
+) -> None:
+    candidate_by_id = {
+        item.get("id"): item for item in candidate.get("extensions", []) if isinstance(item, dict)
+    }
+    for item in existing.get("extensions", []):
+        if not isinstance(item, dict):
+            continue
+        supported = False
+        if registry is not None:
+            status, _ = registry.resolve(item.get("namespace"), item.get("version"))
+            supported = status == "supported"
+        if not supported and candidate_by_id.get(item.get("id")) != item:
+            raise ProtocolError(f"unknown extension changed: {item.get('id')}")
+
+
+PolicyValidator = Callable[[Any], list[str]]
+
+
+def initialize_manifest(
+    path: str | Path,
+    project_root: str,
+    mode: str = "generate",
+    autonomy: str = "explicit",
+    replace_protocol_1: bool = False,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Create fresh Protocol 2 state, optionally replacing exact Protocol 1 state."""
+    manifest_path = Path(path)
+    fresh = new_manifest(project_root, mode, autonomy, timestamp)
+    with _manifest_lock(manifest_path):
+        if manifest_path.exists():
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                raise ProtocolError("existing manifest must be an object")
+            version = existing.get("protocol_version")
+            if version == "1.0":
+                if not replace_protocol_1:
+                    raise ProtocolError("existing Protocol 1 manifest requires replacement")
+            else:
+                raise ProtocolError(f"refusing to replace existing manifest with protocol_version {version!r}")
+
+        saved = json.loads(json.dumps(fresh))
+        saved["run"]["revision"] = 1
+        saved["run"]["updated_at"] = timestamp or _utc_now()
+        errors = validate_manifest(saved) + validate_v2_policy(saved)
+        if errors:
+            raise ProtocolError("invalid input: " + "; ".join(errors))
+        _atomic_write(manifest_path, saved)
+        return saved
+
+
+def save_manifest(
+    path: str | Path,
+    data: dict[str, Any],
+    expected_revision: int | None,
+    registry: ExtensionRegistry | None = None,
+    timestamp: str | None = None,
+    policy_validator: PolicyValidator | None = validate_v2_policy,
+) -> dict[str, Any]:
+    manifest_path = Path(path)
+    with _manifest_lock(manifest_path):
+        existing = load_manifest(manifest_path) if manifest_path.exists() else None
+        if existing is not None:
+            existing_errors = validate_manifest(existing, registry)
+            if existing_errors:
+                raise ProtocolError("invalid input: existing manifest: " + "; ".join(existing_errors))
+        actual = _revision(existing)
+        if actual != expected_revision:
+            raise ProtocolError(f"revision conflict: expected {expected_revision}, found {actual}")
+        supplied = _revision(data)
+        required_supplied = 0 if existing is None else expected_revision
+        if supplied != required_supplied:
+            raise ProtocolError(f"candidate revision conflict: expected {required_supplied}, found {supplied}")
+        candidate = json.loads(json.dumps(data))
+        if existing is not None:
+            _validate_append_only(existing, candidate)
+            _validate_unknown_extensions_preserved(existing, candidate, registry)
+        candidate["run"]["revision"] = 1 if existing is None else actual + 1
+        candidate["run"]["updated_at"] = timestamp or _utc_now()
+        errors = validate_manifest(candidate, registry)
+        if policy_validator is not None:
+            errors.extend(policy_validator(candidate))
+        if errors:
+            raise ProtocolError("invalid input: " + "; ".join(errors))
+        _atomic_write(manifest_path, candidate)
+        return candidate
+
+
+def transition(
+    path: str | Path,
+    expected_revision: int,
+    status: str,
+    actions: list[dict[str, Any]],
+    registry: ExtensionRegistry | None = None,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    existing = load_manifest(path)
+    current = existing["run"]["status"]
+    if status not in TRANSITIONS.get(current, set()):
+        raise ProtocolError(f"invalid transition: {current} -> {status}")
+    candidate = json.loads(json.dumps(existing))
+    candidate["run"]["status"] = status
+    candidate["actions"] = actions
+    return save_manifest(path, candidate, expected_revision, registry, timestamp, validate_v2_policy)
 
 
 def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+        mode="w", encoding="utf-8", dir=path.parent,
+        prefix=f".{path.name}.", suffix=".tmp", delete=False,
     ) as temporary:
         json.dump(data, temporary, indent=2, sort_keys=True)
         temporary.write("\n")
@@ -408,7 +704,7 @@ def _acquire_lock(lock_file: Any) -> None:
         lock_file.seek(0)
         msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
     else:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
 
 def _release_lock(lock_file: Any) -> None:
@@ -416,7 +712,7 @@ def _release_lock(lock_file: Any) -> None:
         lock_file.seek(0)
         msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
     else:
-        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -427,30 +723,39 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--mode", default="generate")
     init.add_argument("--autonomy", default="explicit")
     init.add_argument("--output")
+    init.add_argument(
+        "--replace-protocol-1",
+        action="store_true",
+        help="atomically discard an existing Protocol 1 manifest and initialize Protocol 2",
+    )
     validate = commands.add_parser("validate")
     validate.add_argument("manifest")
     move = commands.add_parser("transition")
     move.add_argument("manifest")
     move.add_argument("--expected-revision", type=int, required=True)
     move.add_argument("--status", required=True)
-    move.add_argument("--next-actions")
+    move.add_argument("--actions")
     args = parser.parse_args(argv)
-
     try:
         if args.command == "init":
-            manifest = new_manifest(args.project_root, args.mode, args.autonomy)
             output = Path(args.output) if args.output else Path(args.project_root) / ".e2e" / "manifest.json"
-            result = save_manifest(output, manifest, None)
+            result = initialize_manifest(
+                output,
+                args.project_root,
+                args.mode,
+                args.autonomy,
+                replace_protocol_1=args.replace_protocol_1,
+            )
         elif args.command == "validate":
-            result = {"errors": validate_manifest(_read_manifest(Path(args.manifest)))}
-            if result["errors"]:
-                print(json.dumps(result))
-                return 2
+            manifest = load_manifest(args.manifest)
+            errors = validate_manifest(manifest) + validate_v2_policy(manifest)
+            result = {"errors": errors}
+            print(json.dumps(result))
+            return 2 if errors else 0
         else:
             actions = []
-            if args.next_actions:
-                with open(args.next_actions, encoding="utf-8") as action_file:
-                    actions = json.load(action_file)
+            if args.actions:
+                actions = json.loads(Path(args.actions).read_text(encoding="utf-8"))
             result = transition(args.manifest, args.expected_revision, args.status, actions)
     except ProtocolError as exc:
         print(str(exc), file=sys.stderr)
@@ -458,10 +763,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"invalid input: {exc}", file=sys.stderr)
         return 2
-
-    print(json.dumps(result, sort_keys=True))
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

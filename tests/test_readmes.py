@@ -12,7 +12,8 @@ class ReadmeContractTests(unittest.TestCase):
         text = (ROOT / "README.md").read_text()
         for required in (
             "e2e-testing",
-            "e2e-web-playwright",
+            "e2e-web",
+            "Protocol 2",
             "## Installation",
             "## Quick start",
             "## Modes",
@@ -24,12 +25,15 @@ class ReadmeContractTests(unittest.TestCase):
 
         for relative in (
             "skills/e2e-testing/SKILL.md",
-            "skills/e2e-web-playwright/SKILL.md",
+            "skills/e2e-web/SKILL.md",
             "evals/fixtures/README.md",
             "evals/HOST_EVALUATION.md",
         ):
             self.assertTrue((ROOT / relative).is_file(), relative)
             self.assertIn(relative, text)
+
+        self.assertNotIn("e2e-web-playwright", text)
+        self.assertNotIn("Protocol 1.0", text)
 
     def test_fixture_readme_explains_tracked_integrity_manifests(self):
         text = (ROOT / "evals" / "fixtures" / "README.md").read_text()

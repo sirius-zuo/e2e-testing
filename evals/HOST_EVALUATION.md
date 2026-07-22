@@ -4,7 +4,9 @@ Codex and Claude host evaluations may consume paid model usage. Do not run any c
 
 Before approval is used, authenticate freshly to the selected host CLI. Use only the disposable fixture workspace created by the harness: do not supply production credentials, production tokens, or access to production systems. If `--keep-results` is used, review the retained transcript for secret leakage before sharing, archiving, or committing anything from `evals/results/`.
 
-Each command creates a fresh fixture copy in an external temporary repository, then installs both portable skills into the host's project-local skill directory. The source repository is never the host working directory. The acceptance status comes from the deterministic evaluator, not host output. Each host invocation is bounded by the configurable `--host-timeout` (300 seconds by default); timeout cleanup terminates the isolated host process tree and its fixture setup process.
+Each command creates a fresh fixture copy in an external temporary repository, then installs the `e2e-testing` and `e2e-web` portable skills into the host's project-local skill directory. The source repository is never the host working directory. The acceptance status comes from the deterministic evaluator, not host output, and the workspace's resulting manifest must validate as Protocol 2. Each host invocation is bounded by the configurable `--host-timeout` (300 seconds by default); timeout cleanup terminates the isolated host process tree and its fixture setup process.
+
+Host evaluations remain opt-in: they consume paid model usage, so run them only with explicit reviewer approval as described above.
 
 ## Codex
 
