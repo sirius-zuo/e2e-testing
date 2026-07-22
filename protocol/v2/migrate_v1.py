@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import hashlib
 import json
+import sys
+from pathlib import Path
 from typing import Any
 
 from protocol.v1.e2e_protocol import validate_manifest as validate_v1_manifest
-from protocol.v2.e2e_protocol import ProtocolError, new_manifest, validate_manifest, validate_v2_policy
+from protocol.v2.e2e_protocol import (
+    ProtocolError,
+    _atomic_write,
+    _manifest_lock,
+    new_manifest,
+    validate_manifest,
+    validate_v2_policy,
+)
 
 
 STATUS_MAP = {
@@ -139,3 +149,47 @@ def migrate_manifest(source: dict[str, Any]) -> dict[str, Any]:
     if errors:
         raise ProtocolError("invalid migrated manifest: " + "; ".join(errors))
     return result
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read migration source: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("migration source must be an object")
+    return value
+
+
+def migrate_file(source_path: str | Path, target_path: str | Path) -> dict[str, Any]:
+    source = Path(source_path).resolve()
+    target = Path(target_path).resolve()
+    if source == target:
+        raise ValueError("source and output must differ")
+    migrated = migrate_manifest(_read_json(source))
+    with _manifest_lock(target):
+        if target.exists():
+            existing = _read_json(target)
+            if existing == migrated:
+                return existing
+            raise ValueError("migration target already exists with different content")
+        _atomic_write(target, migrated)
+    return migrated
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("source")
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = migrate_file(args.source, args.output)
+    except (ValueError, ProtocolError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

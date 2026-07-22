@@ -1,10 +1,14 @@
 import copy
 import json
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from protocol.v1.e2e_protocol import new_manifest as new_v1_manifest
 from protocol.v2.e2e_protocol import validate_manifest
-from protocol.v2.migrate_v1 import migrate_manifest, source_sha256
+from protocol.v2.migrate_v1 import migrate_file, migrate_manifest, source_sha256
 
 
 def complete_v1_manifest():
@@ -77,3 +81,54 @@ class ProtocolV2MigrationMappingTests(unittest.TestCase):
         source["protocol_version"] = "0.9"
         with self.assertRaisesRegex(ValueError, "invalid Protocol 1 manifest"):
             migrate_manifest(source)
+
+
+class ProtocolV2MigrationFileTests(unittest.TestCase):
+    def test_migration_preserves_source_and_publishes_exact_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "v1.json"
+            target_path = Path(tmp) / "v2.json"
+            source = complete_v1_manifest()
+            source_path.write_text(json.dumps(source, indent=2) + "\n")
+            source_bytes = source_path.read_bytes()
+
+            migrated = migrate_file(source_path, target_path)
+
+            self.assertEqual(source_path.read_bytes(), source_bytes)
+            self.assertEqual(json.loads(target_path.read_text()), migrated)
+            self.assertEqual(migrated["run"]["revision"], 7)
+
+    def test_identical_rerun_is_idempotent_but_divergent_target_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "v1.json"
+            target_path = Path(tmp) / "v2.json"
+            source_path.write_text(json.dumps(complete_v1_manifest()))
+            first = migrate_file(source_path, target_path)
+            self.assertEqual(migrate_file(source_path, target_path), first)
+
+            changed = json.loads(target_path.read_text())
+            changed["run"]["status"] = "blocked"
+            target_path.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, "migration target already exists with different content"):
+                migrate_file(source_path, target_path)
+
+    def test_cli_requires_separate_output_and_returns_clean_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "v1.json"
+            target_path = Path(tmp) / "v2.json"
+            source_path.write_text(json.dumps(complete_v1_manifest()))
+            completed = subprocess.run(
+                [sys.executable, "-m", "protocol.v2.migrate_v1", str(source_path), "--output", str(target_path)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(json.loads(completed.stdout)["protocol_version"], "2.0")
+            self.assertTrue(target_path.exists())
+
+            invalid = subprocess.run(
+                [sys.executable, "-m", "protocol.v2.migrate_v1", str(source_path), "--output", str(source_path)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(invalid.returncode, 2)
+            self.assertIn("source and output must differ", invalid.stderr)
+            self.assertNotIn("Traceback", invalid.stderr)
