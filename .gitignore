@@ -3,3 +3,4 @@
 /docs/
 evals/results/
 .codegraph/
+__pycache__/
