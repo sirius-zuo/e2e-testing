@@ -23,3 +23,5 @@ Migration is explicit and lossless. It never overwrites its source. An identical
 ## Authority
 
 `manifest.schema.json` defines core shape. `e2e_protocol.py` additionally enforces references, revisions, append-only evidence and attempts, secret safety, and extension-preservation rules.
+
+Secret safety is a best-effort heuristic keyed on field names (e.g. `password`, `token`, `secret`, `api_key`, `credential`); it does not inspect values, so an unconventionally named secret field will not be flagged.

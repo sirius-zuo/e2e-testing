@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from protocol.v1.e2e_protocol import new_manifest as new_v1_manifest
-from protocol.v2.e2e_protocol import validate_manifest
+from protocol.v2.e2e_protocol import TRANSITIONS, load_manifest, transition, validate_manifest
 from protocol.v2.migrate_v1 import migrate_file, migrate_manifest, source_sha256
 
 
@@ -132,3 +132,31 @@ class ProtocolV2MigrationFileTests(unittest.TestCase):
             self.assertEqual(invalid.returncode, 2)
             self.assertIn("source and output must differ", invalid.stderr)
             self.assertNotIn("Traceback", invalid.stderr)
+
+    def test_migrated_manifest_survives_subsequent_transition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "v1.json"
+            target_path = Path(tmp) / "v2.json"
+            source_path.write_text(json.dumps(complete_v1_manifest()))
+
+            migrate_file(source_path, target_path)
+
+            migrated = load_manifest(target_path)
+            self.assertEqual(migrated["run"]["revision"], 7)
+            migration_evidence = next(
+                item for item in migrated["evidence"] if item.get("kind") == "protocol-migration"
+            )
+            archive_extension = next(
+                item for item in migrated["extensions"] if item["namespace"] == "e2e.protocol1.archive"
+            )
+
+            current_status = migrated["run"]["status"]
+            next_status = "verified"
+            self.assertIn(next_status, TRANSITIONS[current_status])
+
+            transitioned = transition(target_path, expected_revision=7, status=next_status, actions=[])
+
+            self.assertEqual(transitioned["run"]["revision"], 8)
+            self.assertEqual(transitioned["run"]["status"], next_status)
+            self.assertIn(migration_evidence, transitioned["evidence"])
+            self.assertIn(archive_extension, transitioned["extensions"])
