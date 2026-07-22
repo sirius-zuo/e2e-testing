@@ -7,10 +7,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_FILES = (
-    (ROOT / "protocol/v1/manifest.schema.json", "references/manifest.schema.json"),
-    (ROOT / "protocol/v1/e2e_protocol.py", "scripts/e2e_protocol.py"),
+    (ROOT / "protocol/v2/manifest.schema.json", "references/manifest.schema.json"),
+    (ROOT / "protocol/v2/extensions/web.schema.json", "references/extensions/web.schema.json"),
+    (ROOT / "protocol/v2/e2e_protocol.py", "scripts/e2e_protocol.py"),
 )
-TARGETS = (ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web-playwright")
+TARGETS = (ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web")
 
 
 def sync(check: bool) -> list[str]:

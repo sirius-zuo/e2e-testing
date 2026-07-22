@@ -4,16 +4,26 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = [ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web-playwright"]
+TARGETS = [ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web"]
+CANONICAL_FILES = {
+    "references/manifest.schema.json": ROOT / "protocol/v2/manifest.schema.json",
+    "references/extensions/web.schema.json": ROOT / "protocol/v2/extensions/web.schema.json",
+    "scripts/e2e_protocol.py": ROOT / "protocol/v2/e2e_protocol.py",
+}
 
 
 class PackagingTests(unittest.TestCase):
     def test_protocol_copies_match_canonical_files(self):
-        schema = (ROOT / "protocol/v1/manifest.schema.json").read_bytes()
-        utility = (ROOT / "protocol/v1/e2e_protocol.py").read_bytes()
         for target in TARGETS:
-            self.assertEqual((target / "references/manifest.schema.json").read_bytes(), schema)
-            self.assertEqual((target / "scripts/e2e_protocol.py").read_bytes(), utility)
+            for relative, canonical in CANONICAL_FILES.items():
+                self.assertEqual(
+                    (target / relative).read_bytes(),
+                    canonical.read_bytes(),
+                    f"stale bundle: {target.relative_to(ROOT) / relative}",
+                )
+
+    def test_old_web_skill_directory_is_absent(self):
+        self.assertFalse((ROOT / "skills/e2e-web-playwright").exists())
 
     def test_each_bundled_utility_runs_standalone(self):
         for target in TARGETS:

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:e2e-testing:extension:web:1.0",
+  "title": "E2E Web Surface Extension",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["driver", "project", "target"],
+  "properties": {
+    "driver": {"type": ["string", "null"]},
+    "project": {"type": "object"},
+    "target": {"type": "object"}
+  }
+}
