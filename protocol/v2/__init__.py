@@ -1,5 +1,16 @@
 """Public Protocol 2 API."""
 
-from .e2e_protocol import ProtocolError, new_manifest, validate_manifest, validate_v2_policy
+from .e2e_protocol import (
+    ExtensionRegistry,
+    ExtensionSupport,
+    ProtocolError,
+    extension_issues,
+    new_manifest,
+    validate_manifest,
+    validate_v2_policy,
+)
 
-__all__ = ["ProtocolError", "new_manifest", "validate_manifest", "validate_v2_policy"]
+__all__ = [
+    "ExtensionRegistry", "ExtensionSupport", "ProtocolError",
+    "extension_issues", "new_manifest", "validate_manifest", "validate_v2_policy",
+]

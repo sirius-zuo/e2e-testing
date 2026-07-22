@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 
 class ProtocolError(Exception):
@@ -117,6 +118,7 @@ def validate_manifest(data: Any, registry: Any = None) -> list[str]:
     _validate_collections_and_references(data, errors)
     _validate_boundary_references(data, errors)
     _validate_evidence_references(data, errors)
+    _validate_extension_envelopes(data, errors, registry)
     _find_secret_keys(data, errors)
     return errors
 
@@ -362,6 +364,107 @@ def _validate_evidence_references(data: dict[str, Any], errors: list[str]) -> No
                 for ref in refs:
                     if ref not in artifact_ids:
                         errors.append(f"handoffs[{index}].artifact_refs contains an unknown artifact ID: {ref}")
+
+
+ExtensionValidator = Callable[[Any], list[str]]
+
+
+def _version_tuple(value: str) -> tuple[int, int]:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", value):
+        raise ValueError(f"invalid extension version: {value}")
+    major, minor = value.split(".")
+    return int(major), int(minor)
+
+
+@dataclass(frozen=True)
+class ExtensionSupport:
+    namespace: str
+    minimum_version: str
+    maximum_version: str
+    validator: ExtensionValidator
+
+    def contains(self, version: str) -> bool:
+        return _version_tuple(self.minimum_version) <= _version_tuple(version) <= _version_tuple(self.maximum_version)
+
+
+class ExtensionRegistry:
+    def __init__(self) -> None:
+        self._supports: dict[str, list[ExtensionSupport]] = {}
+
+    def register(self, support: ExtensionSupport) -> None:
+        minimum = _version_tuple(support.minimum_version)
+        maximum = _version_tuple(support.maximum_version)
+        if minimum > maximum:
+            raise ValueError("extension support minimum exceeds maximum")
+        entries = self._supports.setdefault(support.namespace, [])
+        for existing in entries:
+            if minimum <= _version_tuple(existing.maximum_version) and _version_tuple(existing.minimum_version) <= maximum:
+                raise ValueError(f"overlapping extension support: {support.namespace}")
+        entries.append(support)
+
+    def resolve(self, namespace: str, version: str) -> tuple[str, ExtensionSupport | None]:
+        entries = self._supports.get(namespace)
+        if not entries:
+            return "capability-unavailable", None
+        try:
+            for support in entries:
+                if support.contains(version):
+                    return "supported", support
+        except ValueError:
+            return "extension-incompatible", None
+        return "extension-incompatible", None
+
+    def validate(self, extension: dict[str, Any]) -> list[str]:
+        status, support = self.resolve(extension["namespace"], extension["version"])
+        return [] if status != "supported" or support is None else support.validator(extension["data"])
+
+
+def extension_issues(data: dict[str, Any], registry: ExtensionRegistry) -> list[dict[str, str]]:
+    issues = []
+    for extension in data.get("extensions", []):
+        if not isinstance(extension, dict):
+            continue
+        namespace = extension.get("namespace")
+        version = extension.get("version")
+        if not isinstance(namespace, str) or not isinstance(version, str):
+            continue
+        status, _ = registry.resolve(namespace, version)
+        if status != "supported":
+            issues.append({
+                "extension_id": extension.get("id", ""),
+                "namespace": namespace,
+                "version": version,
+                "status": status,
+            })
+    return issues
+
+
+def _validate_extension_envelopes(
+    data: dict[str, Any],
+    errors: list[str],
+    registry: ExtensionRegistry | None,
+) -> None:
+    extensions = data.get("extensions")
+    if not isinstance(extensions, list):
+        return
+    required = {"id", "namespace", "version", "owner", "data"}
+    for index, extension in enumerate(extensions):
+        if not isinstance(extension, dict):
+            continue
+        if set(extension) != required:
+            errors.append(f"extensions[{index}] fields are invalid")
+        namespace = extension.get("namespace")
+        version = extension.get("version")
+        if not isinstance(namespace, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+", namespace):
+            errors.append(f"extensions[{index}].namespace is invalid")
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", version):
+            errors.append(f"extensions[{index}].version is invalid")
+        if not isinstance(extension.get("owner"), str):
+            errors.append(f"extensions[{index}].owner must be a string")
+        if not isinstance(extension.get("data"), dict):
+            errors.append(f"extensions[{index}].data must be an object")
+        elif registry is not None and isinstance(namespace, str) and isinstance(version, str):
+            errors.extend(registry.validate(extension))
 
 
 def _find_secret_keys(value: Any, errors: list[str]) -> None:
