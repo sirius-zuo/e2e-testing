@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:e2e-testing:protocol:2.0",
+  "title": "E2E Testing Protocol 2 Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version", "run", "systems", "journeys", "execution_units",
+    "checks", "evidence", "actions", "handoffs", "authorizations",
+    "attempts", "extensions"
+  ],
+  "properties": {
+    "protocol_version": {"const": "2.0"},
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "mode", "autonomy", "status", "created_at", "updated_at", "attempt_budget"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^run-[a-z0-9-]+$"},
+        "revision": {"type": "integer", "minimum": 0},
+        "mode": {"enum": ["plan", "generate", "verify", "repair"]},
+        "autonomy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "auto_repair"],
+          "properties": {"mode": {"enum": ["explicit", "auto"]}, "auto_repair": {"type": "boolean"}}
+        },
+        "status": {"enum": [
+          "initialized", "planned", "ready-for-adapter", "generated-unverified", "verifying",
+          "repair-ready", "handoff-required", "needs-clarification", "needs-authorization",
+          "verified", "blocked", "capability-unavailable", "extension-incompatible"
+        ]},
+        "created_at": {"type": ["string", "null"]},
+        "updated_at": {"type": ["string", "null"]},
+        "attempt_budget": {
+          "type": "object", "additionalProperties": false,
+          "required": ["repair", "verification", "wall_clock_seconds"],
+          "properties": {
+            "repair": {"type": "integer", "minimum": 0},
+            "verification": {"type": "integer", "minimum": 1},
+            "wall_clock_seconds": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "systems": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/system"}},
+    "journeys": {"type": "array", "items": {"$ref": "#/$defs/journey"}},
+    "execution_units": {"type": "array", "items": {"$ref": "#/$defs/executionUnit"}},
+    "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/idObject"}},
+    "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}},
+    "handoffs": {"type": "array", "items": {"$ref": "#/$defs/idObject"}},
+    "authorizations": {"type": "array", "items": {"$ref": "#/$defs/idObject"}},
+    "attempts": {"type": "array", "items": {"$ref": "#/$defs/idObject"}},
+    "extensions": {"type": "array", "items": {"$ref": "#/$defs/extension"}}
+  },
+  "$defs": {
+    "surface": {"enum": ["web", "service", "mobile", "desktop"]},
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "mode", "autonomy", "status", "created_at", "updated_at", "attempt_budget"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^run-[a-z0-9-]+$"},
+        "revision": {"type": "integer", "minimum": 0},
+        "mode": {"enum": ["plan", "generate", "verify", "repair"]},
+        "autonomy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "auto_repair"],
+          "properties": {"mode": {"enum": ["explicit", "auto"]}, "auto_repair": {"type": "boolean"}}
+        },
+        "status": {"enum": [
+          "initialized", "planned", "ready-for-adapter", "generated-unverified", "verifying",
+          "repair-ready", "handoff-required", "needs-clarification", "needs-authorization",
+          "verified", "blocked", "capability-unavailable", "extension-incompatible"
+        ]},
+        "created_at": {"type": ["string", "null"]},
+        "updated_at": {"type": ["string", "null"]},
+        "attempt_budget": {
+          "type": "object", "additionalProperties": false,
+          "required": ["repair", "verification", "wall_clock_seconds"],
+          "properties": {
+            "repair": {"type": "integer", "minimum": 0},
+            "verification": {"type": "integer", "minimum": 1},
+            "wall_clock_seconds": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "system": {
+      "type": "object",
+      "required": ["id", "project_root", "primary_surface", "boundary", "target"],
+      "properties": {
+        "id": {"type": "string"}, "project_root": {"type": "string"},
+        "primary_surface": {"anyOf": [{"$ref": "#/$defs/surface"}, {"type": "null"}]},
+        "boundary": {"$ref": "#/$defs/boundary"}, "target": {"$ref": "#/$defs/target"}
+      },
+      "additionalProperties": false
+    },
+    "boundary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "actors", "public_interfaces", "evidence_ids"],
+      "properties": {
+        "status": {"enum": ["unresolved", "declared", "needs-clarification"]},
+        "actors": {"type": "array", "items": {"type": "string"}},
+        "public_interfaces": {"type": "array", "items": {"$ref": "#/$defs/publicInterface"}},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "publicInterface": {
+      "type": "object", "additionalProperties": true,
+      "required": ["id", "kind", "evidence_ids"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"enum": ["web", "rest", "graphql", "grpc", "websocket", "queue", "stream"]},
+        "endpoint_ref": {"type": ["string", "null"]},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tier", "endpoint_refs", "credential_refs", "mutation_policy"],
+      "properties": {
+        "tier": {"enum": ["local", "ephemeral", "staging", "production", "unspecified"]},
+        "endpoint_refs": {"type": "array", "items": {"type": "string"}},
+        "credential_refs": {"type": "array", "items": {"type": "string"}},
+        "mutation_policy": {"$ref": "#/$defs/mutationPolicy"}
+      }
+    },
+    "mutationPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["namespace_ref", "allowed_classes"],
+      "properties": {
+        "namespace_ref": {"type": ["string", "null"]},
+        "allowed_classes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "idObject": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}, "additionalProperties": true},
+    "journey": {"type": "object", "required": ["id", "system_id", "status"], "properties": {"id": {"type": "string"}, "system_id": {"type": "string"}, "status": {"type": "string"}}, "additionalProperties": true},
+    "executionUnit": {"type": "object", "required": ["id", "system_id", "surface", "capability", "status"], "properties": {"id": {"type": "string"}, "system_id": {"type": "string"}, "surface": {"$ref": "#/$defs/surface"}, "capability": {"type": "string"}, "extension_id": {"type": ["string", "null"]}, "status": {"type": "string"}}, "additionalProperties": true},
+    "check": {"type": "object", "required": ["id", "journey_id", "execution_unit_id", "status"], "properties": {"id": {"type": "string"}, "journey_id": {"type": "string"}, "execution_unit_id": {"type": "string"}, "status": {"type": "string"}}, "additionalProperties": true},
+    "action": {"type": "object", "required": ["id", "capability", "journey_ids"], "properties": {"id": {"type": "string"}, "capability": {"type": "string"}, "journey_ids": {"type": "array", "items": {"type": "string"}}, "resume": {"type": "object"}}, "additionalProperties": true},
+    "extension": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "namespace", "version", "owner", "data"],
+      "properties": {
+        "id": {"type": "string"},
+        "namespace": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9-]*)+$"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+        "owner": {"type": "string"},
+        "data": {"type": "object"}
+      }
+    }
+  }
+}
