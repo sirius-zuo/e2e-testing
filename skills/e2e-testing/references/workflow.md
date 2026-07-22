@@ -13,16 +13,16 @@
 
 This workflow turns repository evidence into a portable journey plan. It does
 not select implementation APIs, generate framework code, or claim browser
-verification. Those decisions belong to the routed adapter or capability.
+verification. Those decisions belong to the routed capability.
 
 Start with the requested mode and the project root. Read repository-level
 instructions before inspecting application source, package metadata, tests, or
-targets. Before reading, validating, or initializing a manifest, perform a
+targets. Before reading, validating, or initializing Protocol 2, perform a
 read-only browser-framework discovery from package metadata, lockfiles, browser
 test scripts, configuration, existing specs, fixtures, and CI commands. If any
-alternate browser E2E framework is detected, including alongside Playwright,
-persist a valid `unsupported-framework` manifest/outcome with the detected
-framework and source locations. Detection itself is read-only: do not add or
+alternate browser driver is detected, including alongside Playwright,
+persist a valid `capability-unavailable` outcome with the detected
+driver and source locations. Detection itself is read-only: do not add or
 change Playwright dependencies, configuration, tests, evidence, or other test
 infrastructure. The sole write permitted for that outcome is its durable
 manifest record. A manifest records all other work after this framework gate
@@ -74,41 +74,41 @@ inventing a selector, an expected response, or a data value.
 
 ## Routing
 
-Routing is framework-neutral. First determine whether a browser E2E framework
+Routing is framework-neutral. First determine whether a browser E2E driver
 is present from package setup, existing suite structure, and repository
 instructions. Do not alter dependencies, configuration, or test infrastructure
 as part of this decision.
 
 | Detected condition | Persisted action | Result |
 | --- | --- | --- |
-| Cypress, WebdriverIO, Selenium, or another framework is present, even with Playwright | `unsupported-framework` | persist the detected framework and read-only evidence only; do not mutate Playwright or test infrastructure |
-| Playwright is present with no alternate browser framework | `e2e-web-playwright` | hand off to the adapter |
-| No browser E2E framework is present | `e2e-web-playwright` | hand off to the adapter |
-| Framework evidence is ambiguous but does not establish an alternate framework | `needs-clarification` | ask without infrastructure change |
+| Cypress, WebdriverIO, Selenium, or another driver is present, even with Playwright | `capability-unavailable` | persist the detected driver and read-only evidence only; do not mutate Playwright or test infrastructure |
+| Playwright is present with no alternate browser driver | `e2e-web` | hand off to `e2e-web` |
+| No browser E2E driver is present | `e2e-web` | hand off to `e2e-web` |
+| Driver evidence is ambiguous but does not establish an alternate driver | `needs-clarification` | ask without infrastructure change |
 
-Direct routing is appropriate when the host can invoke the named adapter.
+Direct routing is appropriate when the host can invoke `e2e-web` by name.
 Automated routing is appropriate only when the host has an authorized capability
 for delegation. After the framework gate passes, persist the action first,
-including its inputs, manifest revision, target journey IDs, and expected resume
-condition. For an unsupported framework, persist the durable manifest outcome
+including its inputs, `run.revision`, target journey IDs, and expected resume
+condition. For an unavailable capability, persist the durable manifest outcome
 only after the read-only gate; it is not a license to bootstrap, migrate, or
 mutate test infrastructure.
 
 ## Actions and handoffs
 
-`next_actions` is ordered. The first action is the default only when its
+`actions` is ordered. The first action is the default only when its
 preconditions are true. Independent actions may appear together so a capable
 host can execute them concurrently; their order still records deterministic
 resume behavior. Do not put mutually dependent actions in concurrent groups.
 
 Every action record includes an action identifier, kind, journey IDs, input
-summary, source manifest revision, owner or capability, status, and result or
+summary, source `run.revision`, owner or capability, status, and result or
 failure reference. Keep a capability handoff record for each delegated action:
 
 | Field | Meaning |
 | --- | --- |
 | `id` | stable identifier for this delegation |
-| `capability` | adapter or host-supported capability requested |
+| `capability` | capability requested, such as `e2e-web` |
 | `requested_at` | timestamp of the persisted request |
 | `manifest_revision` | revision consumed by the delegate |
 | `journey_ids` | immutable list of scoped journey IDs |
@@ -126,15 +126,15 @@ secret-reference names and the minimum target context needed by the receiver.
 ## Resume
 
 On resume, validate the manifest and inspect the most recent action and handoff
-records. Confirm the receiving capability used the recorded revision. If a
+records. Confirm the receiving capability used the recorded `run.revision`. If a
 result is stale, failed, incomplete, or cannot be tied to that revision, retain
 the record, mark its action accordingly, and create the appropriate next action
 instead of overwriting history.
 
 Apply returned evidence to only the scoped journey IDs. Re-evaluate their
-status, risks, and ordered `next_actions`. A successful adapter result can
+status, risks, and ordered `actions`. A successful `e2e-web` result can
 advance generated work, but it does not change `generated-unverified` to a
 verified status without the protocol conditions for verification.
 
 When no compatible capability can continue, provide the exact explicit mode,
-journey IDs, action kind, and manifest revision needed for the next invocation.
+journey IDs, action kind, and `run.revision` needed for the next invocation.

@@ -22,6 +22,10 @@ outcomes remain credible, evidence conflicts, or confidence is below `0.80`, use
 | `authorization-required` | A required target configuration, credential reference, or exact-action approval is absent before the blocked action. Confidence is `1.00` from the gate record. | Record `needs-authorization` and request the narrow missing authorization. |
 | `inconclusive` | Any lower-confidence, mixed, incomplete, flaky, or competing explanation. | Preserve evidence and stop as blocked or request clarification; never repair. |
 
+A `product-defect` handoff's resume field must read exactly
+`{"resume": {"command": "e2e-web verify"}}`; `e2e-web` never edits application
+code to resolve a product defect.
+
 Do not turn a retry pass into a clean verification result. It is additional
 evidence only and must retain the original failure, retry count, and uncertainty.
 An unauthorized or prohibited action is classified before execution; do not

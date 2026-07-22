@@ -6,7 +6,7 @@ import re
 import unittest
 from pathlib import Path
 
-from protocol.v1.e2e_protocol import TARGET_TIERS, TRANSITIONS
+from protocol.v2.e2e_protocol import TARGET_TIERS, TRANSITIONS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,31 +42,52 @@ class SkillContractTests(unittest.TestCase):
                 )
 
     def test_orchestrator_contract(self):
+        web = ROOT / "skills/e2e-web/SKILL.md"
+        self.assertTrue(web.is_file())
+        self.assertFalse((ROOT / "skills/e2e-web-playwright").exists())
+
         skill = ROOT / "skills/e2e-testing/SKILL.md"
-        text = skill.read_text()
-        self.assertLess(len(text.splitlines()), 500)
-        self.assertIn("name: e2e-testing", text)
-        self.assertIn("description:", text)
-        self.assertEqual(set(frontmatter(text)), {"name", "description"})
-        self.assertIn("Default to `generate`", text)
-        self.assertIn("generated-unverified", text)
-        self.assertIn("next_actions", text)
-        self.assertIn("e2e-web-playwright", text)
+        orchestrator_text = skill.read_text()
+        self.assertLess(len(orchestrator_text.splitlines()), 500)
+        self.assertIn("name: e2e-testing", orchestrator_text)
+        self.assertIn("description:", orchestrator_text)
+        self.assertEqual(set(frontmatter(orchestrator_text)), {"name", "description"})
+        self.assertIn("Default to `generate`", orchestrator_text)
+        self.assertIn("generated-unverified", orchestrator_text)
+        self.assertIn("`actions`", orchestrator_text)
+        self.assertNotIn("next_actions", orchestrator_text)
         self.assertIn(
-            "read-only browser-framework discovery before validating or bootstrapping a manifest",
-            text,
+            "read-only browser-framework discovery before accessing or creating `.e2e/` state",
+            orchestrator_text,
         )
-        self.assertIn("even when Playwright is also present", text)
-        self.assertIn("without mutating Playwright or test infrastructure", text)
-        self.assertIn("persist a valid `unsupported-framework` manifest/outcome", text)
         self.assertLess(
-            text.index("read-only browser-framework discovery"),
-            text.index("Validate a compatible `.e2e/manifest.json`"),
+            orchestrator_text.index("read-only browser-framework discovery"),
+            orchestrator_text.index("Otherwise validate and resume Protocol 2"),
         )
-        self.assertNotIn("You are a senior", text)
-        self.assertNotIn("allowed-tools:", text)
+        self.assertIn("Protocol 2", orchestrator_text)
+        self.assertIn("`e2e-web`", orchestrator_text)
+        self.assertIn("`capability-unavailable`", orchestrator_text)
+        self.assertIn("`--replace-protocol-1`", orchestrator_text)
+        self.assertNotIn("e2e-web-playwright", orchestrator_text)
+        self.assertNotIn("unsupported-framework", orchestrator_text)
+        self.assertNotIn("service", orchestrator_text)
+        self.assertNotIn("mobile", orchestrator_text)
+        self.assertNotIn("desktop", orchestrator_text)
+        self.assertNotIn("You are a senior", orchestrator_text)
+        self.assertNotIn("allowed-tools:", orchestrator_text)
         self.assert_relative_links_exist(ROOT / "skills/e2e-testing")
-        self.assert_relative_links_exist(ROOT / "skills/e2e-web-playwright")
+        self.assert_relative_links_exist(ROOT / "skills/e2e-web")
+
+        web_text = web.read_text()
+        self.assertIn("name: e2e-web", web_text)
+        self.assertIn("Playwright remains the V2 execution driver", web_text)
+        self.assertIn("Protocol 2", web_text)
+        self.assertIn("`--replace-protocol-1`", web_text)
+        self.assertNotIn("e2e-web-playwright", web_text)
+        self.assertNotIn("unsupported-framework", web_text)
+
+        for playwright_api in ("page.getByRole", "test.describe", "expect("):
+            self.assertNotIn(playwright_api, orchestrator_text)
 
     def test_safety_tiers_and_portable_protocol_examples(self):
         safety = (ROOT / "skills/e2e-testing/references/safety.md").read_text()
@@ -90,45 +111,57 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("python3 scripts/e2e_protocol.py --help", protocol)
         self.assertIn("python3 scripts/e2e_protocol.py init --help", protocol)
         self.assertIn("python3 scripts/e2e_protocol.py validate --help", protocol)
+        self.assertIn(
+            "python3 scripts/e2e_protocol.py init --project-root PROJECT --output PROJECT/.e2e/manifest.json",
+            protocol,
+        )
+        self.assertIn(
+            "python3 scripts/e2e_protocol.py init --project-root PROJECT --output "
+            "PROJECT/.e2e/manifest.json --replace-protocol-1",
+            protocol,
+        )
+        self.assertIn("python3 scripts/e2e_protocol.py validate PROJECT/.e2e/manifest.json", protocol)
         self.assertNotIn("skills/e2e-testing/scripts/e2e_protocol.py", protocol)
 
-    def test_playwright_adapter_contract_and_orchestrator_boundary(self):
-        adapter = ROOT / "skills/e2e-web-playwright/SKILL.md"
-        adapter_text = adapter.read_text()
+    def test_web_contract_and_orchestrator_boundary(self):
+        web = ROOT / "skills/e2e-web/SKILL.md"
+        web_text = web.read_text()
         orchestrator_text = (ROOT / "skills/e2e-testing/SKILL.md").read_text()
 
-        self.assertLess(len(adapter_text.splitlines()), 500)
-        self.assertIn("name: e2e-web-playwright", adapter_text)
-        self.assertIn("description:", adapter_text)
-        self.assertEqual(set(frontmatter(adapter_text)), {"name", "description"})
-        self.assertIn("`plan`, `generate`, `verify`, or `repair`", adapter_text)
-        self.assertIn("default to `generate`", adapter_text)
-        self.assertIn("bootstrap one with the bundled utility", adapter_text)
-        self.assertIn("read-only browser-framework detection", adapter_text)
+        self.assertLess(len(web_text.splitlines()), 500)
+        self.assertIn("name: e2e-web", web_text)
+        self.assertIn("description:", web_text)
+        self.assertEqual(set(frontmatter(web_text)), {"name", "description"})
+        self.assertIn("`plan`, `generate`, `verify`, or `repair`", web_text)
+        self.assertIn("default to `generate`", web_text)
+        self.assertIn("Validate and resume an existing Protocol 2 run", web_text)
+        self.assertIn("read-only browser-framework detection", web_text)
         self.assertLess(
-            adapter_text.index("read-only browser-framework detection"),
-            adapter_text.index("Validate an existing manifest"),
+            web_text.index("read-only browser-framework detection"),
+            web_text.index("Validate and resume an existing Protocol 2 run"),
         )
-        self.assertIn("live inspection", adapter_text)
-        self.assertIn("source/spec evidence", adapter_text)
-        self.assertIn("unsupported-framework", adapter_text)
-        self.assertIn("generated-unverified", adapter_text)
-        self.assertIn("recorded test defect", adapter_text)
-        self.assertIn("test/support files only", adapter_text)
-        self.assertIn("Repair changes are bounded by manifest budgets", adapter_text)
-        self.assertIn("Never modify application code", adapter_text)
-        self.assertIn("Never weaken expected outcomes", adapter_text)
-        self.assertIn("unconditional skips", adapter_text)
-        self.assertIn("hardcoded sleeps", adapter_text)
-        self.assertIn("product defects", adapter_text)
-        self.assertIn("fix-product-defect capability handoff", adapter_text)
-        self.assert_relative_links_exist(ROOT / "skills/e2e-web-playwright")
+        self.assertIn("live inspection", web_text)
+        self.assertIn("source/spec evidence", web_text)
+        self.assertIn("`capability-unavailable`", web_text)
+        self.assertNotIn("unsupported-framework", web_text)
+        self.assertIn("generated-unverified", web_text)
+        self.assertIn("recorded test defect", web_text)
+        self.assertIn("test/support files only", web_text)
+        self.assertIn("Repair changes are bounded by manifest budgets", web_text)
+        self.assertIn("Never modify application code", web_text)
+        self.assertIn("Never weaken expected outcomes", web_text)
+        self.assertIn("unconditional skips", web_text)
+        self.assertIn("hardcoded sleeps", web_text)
+        self.assertIn("product defects", web_text)
+        self.assertIn("fix-product-defect capability handoff", web_text)
+        self.assertNotIn("e2e-web-playwright", web_text)
+        self.assert_relative_links_exist(ROOT / "skills/e2e-web")
 
         for playwright_api in ("page.getByRole", "test.describe", "expect("):
             self.assertNotIn(playwright_api, orchestrator_text)
 
-    def test_playwright_adapter_reference_safety_contract(self):
-        references = ROOT / "skills/e2e-web-playwright/references"
+    def test_web_reference_safety_contract(self):
+        references = ROOT / "skills/e2e-web/references"
         workflow = (references / "workflow.md").read_text()
         workflow_semantics = " ".join(workflow.split())
         failure = (references / "failure-classification.md").read_text()
@@ -139,16 +172,17 @@ class SkillContractTests(unittest.TestCase):
         protocol_semantics = " ".join(protocol.split())
 
         self.assertIn(
-            "Perform read-only browser-framework detection before validating or bootstrapping a manifest",
+            "Perform read-only browser-framework detection before validating, "
+            "initializing, or resuming Protocol 2",
             workflow,
         )
         self.assertIn("even when Playwright is also present", workflow)
-        self.assertIn("unconditionally stop as `unsupported-framework`", workflow)
-        self.assertIn("After detection, persist a valid `unsupported-framework` manifest", workflow)
+        self.assertIn("unconditionally stop as `capability-unavailable`", workflow)
+        self.assertIn("After detection, persist a valid `capability-unavailable` outcome", workflow)
         self.assertIn("durable manifest outcome after read-only detection", workflow_semantics)
         self.assertLess(
             workflow_semantics.index("Perform read-only browser-framework detection"),
-            workflow_semantics.index("validate an existing manifest"),
+            workflow_semantics.index("validate and resume an existing Protocol 2 run"),
         )
         self.assertIn("Use the protocol utility only to persist that outcome", protocol)
 
@@ -167,6 +201,10 @@ class SkillContractTests(unittest.TestCase):
             "evidence_ids", "journey_ids", "capability", "resume",
         ):
             self.assertIn(f"`{handoff_field}`", workflow)
+        self.assertIn('{"resume": {"command": "e2e-web verify"}}', workflow)
+        self.assertIn('{"resume": {"command": "e2e-web verify"}}', failure)
+        self.assertNotIn("e2e-web-playwright verify", workflow)
+        self.assertIn("do not repair application code", failure_semantics)
         self.assertIn("Choose exactly one mutually exclusive primary outcome.", failure_semantics)
         self.assertIn(
             "only a `test-defect` at `0.80` or higher may enter repair.",
@@ -189,12 +227,15 @@ class SkillContractTests(unittest.TestCase):
             protocol_semantics.index("It can otherwise run directly"),
         )
         self.assertIn(
-            "after read-only detection, create the durable unsupported-framework outcome without adding Playwright infrastructure.",
+            "after read-only detection, create the durable capability-unavailable outcome "
+            "without adding Playwright infrastructure.",
             protocol_semantics,
         )
+        self.assertNotIn("unsupported-framework", protocol_semantics)
+        self.assertNotIn("e2e-web-playwright", protocol_semantics)
 
     def test_protocol_documents_use_exact_schema_vocabulary(self):
-        schema = (ROOT / "protocol/v1/manifest.schema.json").read_text()
+        schema = (ROOT / "protocol/v2/manifest.schema.json").read_text()
         orchestrator_protocol = (ROOT / "skills/e2e-testing/references/protocol.md").read_text()
         workflow = (ROOT / "skills/e2e-testing/references/workflow.md").read_text()
         safety = (ROOT / "skills/e2e-testing/references/safety.md").read_text()
