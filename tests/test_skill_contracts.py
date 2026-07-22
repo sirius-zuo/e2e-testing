@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -281,6 +282,32 @@ class SkillContractTests(unittest.TestCase):
             "reproduction_steps", "expected_behavior", "actual_behavior", "artifact_refs",
             "evidence_ids", "resume", "result",
         })
+
+    def test_active_surfaces_have_no_legacy_web_runtime_contract(self):
+        active_files = [ROOT / "README.md", ROOT / "scripts/sync_protocol.py"]
+        for directory in (ROOT / "skills", ROOT / "evals"):
+            active_files.extend(
+                path for path in directory.rglob("*")
+                if path.is_file()
+                and "fixtures" not in path.parts
+                and "results" not in path.parts
+                and "__pycache__" not in path.parts
+            )
+        legacy_name = "e2e-web-" + "playwright"
+        for path in active_files:
+            if path.suffix not in {".md", ".json", ".py"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn(legacy_name, text, path.relative_to(ROOT))
+            self.assertNotIn("Protocol 1.0 is the manifest contract", text, path.relative_to(ROOT))
+
+    def test_active_bundles_publish_protocol_2_and_web_extension(self):
+        for skill in ("e2e-testing", "e2e-web"):
+            root = ROOT / "skills" / skill
+            schema = json.loads((root / "references/manifest.schema.json").read_text())
+            web = json.loads((root / "references/extensions/web.schema.json").read_text())
+            self.assertEqual(schema["properties"]["protocol_version"]["const"], "2.0")
+            self.assertEqual(web["$id"], "urn:e2e-testing:extension:web:1.0")
 
 
 if __name__ == "__main__":
