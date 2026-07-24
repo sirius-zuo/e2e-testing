@@ -88,7 +88,7 @@ then end all generated work as `generated-unverified`.
 
 ### Verify
 
-Verify only registered manifest-selected test IDs against an authorized target.
+Verify only registered manifest-selected check IDs against an authorized target.
 Check target tier, target configuration, credentials references, and any
 destructive-data approval before opening the target or executing setup. Local and
 ephemeral work may proceed after scope checks; staging requires an explicitly
@@ -107,13 +107,13 @@ convenience. Record one evidence item per run with exactly these fields:
 | `id` | stable evidence ID |
 | `manifest_revision_consumed` | revision read before the evidence-producing run; the atomic save persists the resulting manifest as the next revision |
 | `phase` | current evaluator phase name (`verify`, `repair`, or a named resumed phase) |
-| `test_ids` | immutable selected IDs |
+| `check_ids` | immutable selected check IDs |
 | `command` | sanitized command invoked |
 | `target` | tier and configured target reference, never a secret value |
 | `execution_environment` | distinct sanitized record with `browser_project`, `browser_version` when available, `os_platform`, `runtime`, `application_build_ref`, `target_reference`, and `target_tier`; never copy secrets |
 | `started_at` and `duration_ms` | execution timing |
 | `exit_code` and `retry` | outcome and bounded rerun number |
-| `outcomes` | per-test pass/fail/blocked result |
+| `outcomes` | per-check pass/fail/blocked results, each keyed by `outcomes[].check_id` |
 | `artifacts` | sanitized trace, screenshot, video, and log paths with hashes |
 | `classification` | primary result, confidence, rationale, and evidence IDs |
 

@@ -203,6 +203,9 @@ class SkillContractTests(unittest.TestCase):
         ):
             self.assertIn(f"`{handoff_field}`", workflow)
         self.assertIn('{"resume": {"command": "e2e-web verify"}}', workflow)
+        self.assertIn("| `check_ids` | immutable selected check IDs |", workflow)
+        self.assertIn("`outcomes[].check_id`", workflow)
+        self.assertNotIn("`test_ids`", workflow)
         self.assertIn('{"resume": {"command": "e2e-web verify"}}', failure)
         self.assertNotIn("e2e-web-playwright verify", workflow)
         self.assertIn("do not repair application code", failure_semantics)

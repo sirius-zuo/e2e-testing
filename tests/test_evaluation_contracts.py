@@ -741,6 +741,17 @@ class EvaluatorTests(unittest.TestCase):
             evaluate_result._validate_manifest(manifest),
         )
 
+    def test_published_web_evidence_vocabulary_matches_evaluator(self):
+        workflow = (ROOT / "skills/e2e-web/references/workflow.md").read_text()
+        self.assertIn("| `check_ids` | immutable selected check IDs |", workflow)
+        self.assertIn("`outcomes[].check_id`", workflow)
+        evidence = _verification_evidence(
+            "check-checkout", revision_consumed=4, phase="verify",
+        )
+        self.assertEqual(evidence["check_ids"], ["check-checkout"])
+        self.assertEqual(evidence["outcomes"][0]["check_id"], "check-checkout")
+        self.assertTrue(evaluate_result._is_execution_evidence(evidence, {"check-checkout"}))
+
 
 class HostHarnessTests(unittest.TestCase):
     def setUp(self):
