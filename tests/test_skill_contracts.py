@@ -312,6 +312,28 @@ class SkillContractTests(unittest.TestCase):
             self.assertEqual(schema["properties"]["protocol_version"]["const"], "2.0")
             self.assertEqual(web["$id"], "urn:e2e-testing:extension:web:1.0")
 
+    def test_protocol_kernel_is_surface_neutral_and_portable(self):
+        runtime = (ROOT / "protocol/v2/e2e_protocol.py").read_text()
+        helper = (ROOT / "protocol/v2/extension_catalog.py").read_text()
+        for forbidden in ("e2e.web", "e2e.service", "jsonschema"):
+            self.assertNotIn(forbidden, runtime)
+            self.assertNotIn(forbidden, helper)
+
+    def test_active_bundles_publish_registered_web_catalogs(self):
+        for skill in ("e2e-testing", "e2e-web"):
+            root = ROOT / "skills" / skill
+            catalog = json.loads((root / "references/extensions/catalog.json").read_text())
+            self.assertEqual(
+                {entry["namespace"] for entry in catalog["extensions"]},
+                {"e2e.web"},
+            )
+            support = catalog["extensions"][0]["versions"]
+            self.assertEqual(support, [{
+                "minimum": "1.0", "maximum": "1.0",
+                "dialect": "draft2020-12-subset-1", "schema": "web.schema.json",
+            }])
+            self.assertTrue((root / "scripts/extension_catalog.py").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

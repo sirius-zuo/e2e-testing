@@ -52,14 +52,14 @@ Add black-box service-interface E2E testing and establish the long-lived protoco
 ### Prerequisites
 
 - V1 web workflows and safety behavior are stable.
-- V1 manifests have deterministic validation and sufficient history for lossless migration testing.
+- V1 manifests have deterministic validation and fresh Protocol 2 replacement behavior.
 
 ### Deliverables
 
 - Protocol 2 stable kernel and typed surface extensions.
 - Explicit, validated system boundaries.
-- Lossless Protocol 1 migration.
-- Migration of the orchestrator to Protocol 2.
+- Fresh Protocol 2 state replacement of exact Protocol 1 manifests.
+- Offline historical migration utility for archival of legacy manifests.
 - Rename `e2e-web-playwright` to `e2e-web` and migrate it to Protocol 2.
 - New `e2e-service` surface skill.
 - Repository-native REST, GraphQL, gRPC, WebSocket, queue, and event-stream modules.
@@ -73,11 +73,11 @@ Add black-box service-interface E2E testing and establish the long-lived protoco
 - Multi-system or multi-surface composition.
 - Fault injection and topology-aware resilience control.
 - Database state as an E2E acceptance oracle.
-- Protocol 1 runtime compatibility after migration.
+- Protocol 1 runtime compatibility or active history migration.
 
 ### Exit criteria
 
-- V1 web history migrates losslessly.
+- Active skills never invoke the offline migrator and replace exact Protocol 1 state only with explicit authorization.
 - Web and service runs use the same Protocol 2 kernel.
 - Every service protocol module meets the V1 quality bar.
 - Public-versus-internal interface ambiguity is handled explicitly.
@@ -86,7 +86,7 @@ Add black-box service-interface E2E testing and establish the long-lived protoco
 
 ### Delivery decomposition
 
-V2 is one release composed of focused subprojects: Protocol 2 and migration; web migration; service foundation with REST/HTTP; GraphQL; gRPC; WebSockets; queues; event streams; and final multi-protocol integration. Each subproject receives its own spec, plan, implementation, and verification cycle. All are required before V2 is complete.
+V2 is one release composed of focused subprojects: Protocol 2 kernel and offline historical migration utility; web surface stabilization; service foundation with REST/HTTP; GraphQL; gRPC; WebSockets; queues; event streams; and final multi-protocol integration. Each subproject receives its own spec, plan, implementation, and verification cycle. All are required before V2 is complete.
 
 ## V3 — Mobile UI
 
