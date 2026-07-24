@@ -733,6 +733,14 @@ class EvaluatorTests(unittest.TestCase):
         self.assertEqual(subprocess.run(["node", "--test"], cwd=repair, capture_output=True).returncode, 0)
         self.assertEqual(subprocess.run(["node", "--test"], cwd=product, capture_output=True).returncode, 0)
 
+    def test_evaluator_rejects_malformed_registered_web_extension(self):
+        manifest = _manifest(Path("/workspace"))
+        manifest["extensions"][0]["data"] = {}
+        self.assertIn(
+            "extension data missing required property: driver",
+            evaluate_result._validate_manifest(manifest),
+        )
+
 
 class HostHarnessTests(unittest.TestCase):
     def setUp(self):
