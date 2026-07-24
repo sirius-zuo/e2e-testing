@@ -3,16 +3,25 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from protocol.v2.e2e_protocol import (
     ExtensionRegistry,
     ExtensionSupport,
     ProtocolError,
     extension_issues,
+    initialize_manifest,
     new_manifest,
     save_manifest,
     validate_manifest,
 )
+
+
+def web_extension(data):
+    return {
+        "id": "extension-web", "namespace": "e2e.web", "version": "1.0",
+        "owner": "e2e-web", "data": data,
+    }
 
 
 def validate_service_data(data):
@@ -100,3 +109,56 @@ class ProtocolV2ExtensionTests(unittest.TestCase):
             changed["extensions"][0]["data"]["driver"] = "grpc"
             updated = save_manifest(path, changed, 1, registry, "2026-07-21T00:00:02Z")
             self.assertEqual(updated["extensions"][0]["data"]["driver"], "grpc")
+
+    def test_bundled_web_schema_is_used_without_a_registry_argument(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-24T00:00:00Z")
+        manifest["extensions"] = [web_extension({})]
+        self.assertIn("extension data missing required property: driver", validate_manifest(manifest))
+
+    def test_bundled_web_extension_can_change_across_revisions(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-24T00:00:00Z")
+        manifest["extensions"] = [web_extension({"driver": None, "project": {}, "target": {}})]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            saved = save_manifest(path, manifest, None, timestamp="2026-07-24T00:00:01Z")
+            changed = copy.deepcopy(saved)
+            changed["extensions"][0]["data"]["driver"] = "playwright"
+            updated = save_manifest(path, changed, 1, timestamp="2026-07-24T00:00:02Z")
+            self.assertEqual(updated["extensions"][0]["data"]["driver"], "playwright")
+
+    def test_bundled_registry_reports_unsupported_web_version(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-24T00:00:00Z")
+        manifest["extensions"] = [web_extension({"driver": None, "project": {}, "target": {}})]
+        manifest["extensions"][0]["version"] = "1.1"
+        self.assertEqual(extension_issues(manifest)[0]["status"], "extension-incompatible")
+
+    def test_explicit_empty_registry_still_models_an_uninstalled_capability(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-24T00:00:00Z")
+        manifest["extensions"] = [web_extension({"driver": None, "project": {}, "target": {}})]
+        self.assertEqual(extension_issues(manifest, ExtensionRegistry())[0]["status"], "capability-unavailable")
+
+    def test_catalog_failure_precedes_manifest_mutation(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-24T00:00:00Z")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "manifest.json"
+            saved = save_manifest(path, manifest, None, timestamp="2026-07-24T00:00:01Z")
+            before = path.read_bytes()
+            candidate = copy.deepcopy(saved)
+            broken_catalog = root / "catalog.json"
+            broken_catalog.write_text("{}", encoding="utf-8")
+            with mock.patch(
+                "protocol.v2.e2e_protocol._default_catalog_path",
+                return_value=broken_catalog,
+            ):
+                with self.assertRaisesRegex(ProtocolError, "extension catalog unavailable"):
+                    save_manifest(path, candidate, 1, timestamp="2026-07-24T00:00:02Z")
+            self.assertEqual(path.read_bytes(), before)
+            uninitialized = root / "new-manifest.json"
+            with mock.patch(
+                "protocol.v2.e2e_protocol._default_catalog_path",
+                return_value=broken_catalog,
+            ):
+                with self.assertRaisesRegex(ProtocolError, "extension catalog unavailable"):
+                    initialize_manifest(uninitialized, str(root))
+            self.assertFalse(uninitialized.exists())

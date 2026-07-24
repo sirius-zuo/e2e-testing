@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -10,7 +12,6 @@ import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -19,6 +20,29 @@ if os.name == "nt":
     import msvcrt
 else:
     import fcntl
+
+
+def _load_catalog_module():
+    if __package__:
+        return importlib.import_module(".extension_catalog", __package__)
+    helper_path = Path(__file__).resolve().with_name("extension_catalog.py")
+    module_name = f"{__name__}_extension_catalog"
+    spec = importlib.util.spec_from_file_location(module_name, helper_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load extension catalog helper: {helper_path.name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_CATALOG_MODULE = _load_catalog_module()
+ExtensionCatalogError = _CATALOG_MODULE.ExtensionCatalogError
+ExtensionRegistry = _CATALOG_MODULE.ExtensionRegistry
+ExtensionSupport = _CATALOG_MODULE.ExtensionSupport
+load_extension_registry = _CATALOG_MODULE.load_extension_registry
+
+_AUTO_REGISTRY = object()
 
 
 class ProtocolError(Exception):
@@ -78,7 +102,9 @@ def new_manifest(
     mode: str = "generate",
     autonomy: str = "explicit",
     timestamp: str | None = None,
+    registry: Any = _AUTO_REGISTRY,
 ) -> dict[str, Any]:
+    resolved_registry = _resolve_registry(registry)
     now = timestamp or _utc_now()
     manifest = {
         "protocol_version": PROTOCOL_VERSION,
@@ -119,13 +145,14 @@ def new_manifest(
         "attempts": [],
         "extensions": [],
     }
-    errors = validate_manifest(manifest) + validate_v2_policy(manifest)
+    errors = validate_manifest(manifest, resolved_registry) + validate_v2_policy(manifest)
     if errors:
         raise ProtocolError("invalid input: " + "; ".join(errors))
     return manifest
 
 
-def validate_manifest(data: Any, registry: Any = None) -> list[str]:
+def validate_manifest(data: Any, registry: Any = _AUTO_REGISTRY) -> list[str]:
+    resolved_registry = _resolve_registry(registry)
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["manifest must be an object"]
@@ -146,7 +173,7 @@ def validate_manifest(data: Any, registry: Any = None) -> list[str]:
     _validate_collections_and_references(data, errors)
     _validate_boundary_references(data, errors)
     _validate_evidence_references(data, errors)
-    _validate_extension_envelopes(data, errors, registry)
+    _validate_extension_envelopes(data, errors, resolved_registry)
     _find_secret_keys(data, errors)
     return errors
 
@@ -396,60 +423,27 @@ def _validate_evidence_references(data: dict[str, Any], errors: list[str]) -> No
                         errors.append(f"handoffs[{index}].artifact_refs contains an unknown artifact ID: {ref}")
 
 
-ExtensionValidator = Callable[[Any], list[str]]
+def _default_catalog_path(runtime_file: str | Path | None = None) -> Path:
+    runtime = Path(runtime_file or __file__).resolve()
+    directory = runtime.parent
+    if directory.name == "v2" and directory.parent.name == "protocol":
+        return directory / "extensions" / "catalog.json"
+    if directory.name == "scripts":
+        return directory.parent / "references" / "extensions" / "catalog.json"
+    raise ProtocolError("extension catalog unavailable: unsupported runtime layout")
 
 
-def _version_tuple(value: str) -> tuple[int, int]:
-    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", value):
-        raise ValueError(f"invalid extension version: {value}")
-    major, minor = value.split(".")
-    return int(major), int(minor)
+def _resolve_registry(registry: Any = _AUTO_REGISTRY) -> ExtensionRegistry | None:
+    if registry is not _AUTO_REGISTRY:
+        return registry
+    try:
+        return load_extension_registry(_default_catalog_path())
+    except ExtensionCatalogError as exc:
+        raise ProtocolError(f"extension catalog unavailable: {exc}") from exc
 
 
-@dataclass(frozen=True)
-class ExtensionSupport:
-    namespace: str
-    minimum_version: str
-    maximum_version: str
-    validator: ExtensionValidator
-
-    def contains(self, version: str) -> bool:
-        return _version_tuple(self.minimum_version) <= _version_tuple(version) <= _version_tuple(self.maximum_version)
-
-
-class ExtensionRegistry:
-    def __init__(self) -> None:
-        self._supports: dict[str, list[ExtensionSupport]] = {}
-
-    def register(self, support: ExtensionSupport) -> None:
-        minimum = _version_tuple(support.minimum_version)
-        maximum = _version_tuple(support.maximum_version)
-        if minimum > maximum:
-            raise ValueError("extension support minimum exceeds maximum")
-        entries = self._supports.setdefault(support.namespace, [])
-        for existing in entries:
-            if minimum <= _version_tuple(existing.maximum_version) and _version_tuple(existing.minimum_version) <= maximum:
-                raise ValueError(f"overlapping extension support: {support.namespace}")
-        entries.append(support)
-
-    def resolve(self, namespace: str, version: str) -> tuple[str, ExtensionSupport | None]:
-        entries = self._supports.get(namespace)
-        if not entries:
-            return "capability-unavailable", None
-        try:
-            for support in entries:
-                if support.contains(version):
-                    return "supported", support
-        except ValueError:
-            return "extension-incompatible", None
-        return "extension-incompatible", None
-
-    def validate(self, extension: dict[str, Any]) -> list[str]:
-        status, support = self.resolve(extension["namespace"], extension["version"])
-        return [] if status != "supported" or support is None else support.validator(extension["data"])
-
-
-def extension_issues(data: dict[str, Any], registry: ExtensionRegistry) -> list[dict[str, str]]:
+def extension_issues(data: dict[str, Any], registry: Any = _AUTO_REGISTRY) -> list[dict[str, str]]:
+    resolved_registry = _resolve_registry(registry)
     issues = []
     for extension in data.get("extensions", []):
         if not isinstance(extension, dict):
@@ -458,7 +452,7 @@ def extension_issues(data: dict[str, Any], registry: ExtensionRegistry) -> list[
         version = extension.get("version")
         if not isinstance(namespace, str) or not isinstance(version, str):
             continue
-        status, _ = registry.resolve(namespace, version)
+        status, _ = resolved_registry.resolve(namespace, version)
         if status != "supported":
             issues.append({
                 "extension_id": extension.get("id", ""),
@@ -584,10 +578,12 @@ def initialize_manifest(
     autonomy: str = "explicit",
     replace_protocol_1: bool = False,
     timestamp: str | None = None,
+    registry: Any = _AUTO_REGISTRY,
 ) -> dict[str, Any]:
     """Create fresh Protocol 2 state, optionally replacing exact Protocol 1 state."""
+    resolved_registry = _resolve_registry(registry)
     manifest_path = Path(path)
-    fresh = new_manifest(project_root, mode, autonomy, timestamp)
+    fresh = new_manifest(project_root, mode, autonomy, timestamp, resolved_registry)
     with _manifest_lock(manifest_path):
         if manifest_path.exists():
             existing = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -603,7 +599,7 @@ def initialize_manifest(
         saved = json.loads(json.dumps(fresh))
         saved["run"]["revision"] = 1
         saved["run"]["updated_at"] = timestamp or _utc_now()
-        errors = validate_manifest(saved) + validate_v2_policy(saved)
+        errors = validate_manifest(saved, resolved_registry) + validate_v2_policy(saved)
         if errors:
             raise ProtocolError("invalid input: " + "; ".join(errors))
         _atomic_write(manifest_path, saved)
@@ -614,15 +610,16 @@ def save_manifest(
     path: str | Path,
     data: dict[str, Any],
     expected_revision: int | None,
-    registry: ExtensionRegistry | None = None,
+    registry: Any = _AUTO_REGISTRY,
     timestamp: str | None = None,
     policy_validator: PolicyValidator | None = validate_v2_policy,
 ) -> dict[str, Any]:
+    resolved_registry = _resolve_registry(registry)
     manifest_path = Path(path)
     with _manifest_lock(manifest_path):
         existing = load_manifest(manifest_path) if manifest_path.exists() else None
         if existing is not None:
-            existing_errors = validate_manifest(existing, registry)
+            existing_errors = validate_manifest(existing, resolved_registry)
             if existing_errors:
                 raise ProtocolError("invalid input: existing manifest: " + "; ".join(existing_errors))
         actual = _revision(existing)
@@ -635,10 +632,10 @@ def save_manifest(
         candidate = json.loads(json.dumps(data))
         if existing is not None:
             _validate_append_only(existing, candidate)
-            _validate_unknown_extensions_preserved(existing, candidate, registry)
+            _validate_unknown_extensions_preserved(existing, candidate, resolved_registry)
         candidate["run"]["revision"] = 1 if existing is None else actual + 1
         candidate["run"]["updated_at"] = timestamp or _utc_now()
-        errors = validate_manifest(candidate, registry)
+        errors = validate_manifest(candidate, resolved_registry)
         if policy_validator is not None:
             errors.extend(policy_validator(candidate))
         if errors:
@@ -652,9 +649,10 @@ def transition(
     expected_revision: int,
     status: str,
     actions: list[dict[str, Any]],
-    registry: ExtensionRegistry | None = None,
+    registry: Any = _AUTO_REGISTRY,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
+    resolved_registry = _resolve_registry(registry)
     existing = load_manifest(path)
     current = existing["run"]["status"]
     if status not in TRANSITIONS.get(current, set()):
@@ -662,7 +660,7 @@ def transition(
     candidate = json.loads(json.dumps(existing))
     candidate["run"]["status"] = status
     candidate["actions"] = actions
-    return save_manifest(path, candidate, expected_revision, registry, timestamp, validate_v2_policy)
+    return save_manifest(path, candidate, expected_revision, resolved_registry, timestamp, validate_v2_policy)
 
 
 def _atomic_write(path: Path, data: dict[str, Any]) -> None:
