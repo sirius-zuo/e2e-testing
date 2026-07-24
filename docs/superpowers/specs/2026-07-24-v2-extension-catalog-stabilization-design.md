@@ -21,6 +21,7 @@ This stabilization introduces one generic extension-catalog mechanism suitable f
   - future `e2e-service` recognizes only `e2e.service`;
   - `e2e-testing` recognizes every surface it can actively route.
 - Normal public runtime operations automatically load the catalog packaged beside that runtime.
+- Portable runtime validation uses only the Python standard library and must not require dependency installation in the target repository or skill host.
 - Tests and advanced callers may explicitly provide a custom registry instead.
 - Catalog or schema installation failures fail closed before manifest mutation.
 - The Protocol 2 manifest structure does not change and no manifest migration is introduced.
@@ -67,6 +68,7 @@ The catalog is strict release metadata, not project state. Its initial shape is:
         {
           "minimum": "1.0",
           "maximum": "1.0",
+          "dialect": "draft2020-12-subset-1",
           "schema": "web.schema.json"
         }
       ]
@@ -81,7 +83,8 @@ Each entry declares:
 
 - the extension namespace;
 - the owning capability;
-- one or more inclusive minimum and maximum version pairs; and
+- one or more inclusive minimum and maximum version pairs;
+- the runtime schema dialect for each range; and
 - a schema path relative to the catalog's extension directory.
 
 Catalog versioning governs only release metadata parsing. It does not alter `protocol_version` or trigger project-manifest migration.
@@ -122,13 +125,29 @@ For a bundled operation, the runtime:
 2. validates the catalog structure and supported catalog version;
 3. validates namespace uniqueness, ownership, version syntax, range ordering, and non-overlap;
 4. resolves each schema path within the catalog extension directory;
-5. loads and self-validates each Draft 2020-12 JSON Schema;
+5. loads each schema, verifies that it conforms to its declared supported dialect, and rejects unknown keywords;
 6. creates an `ExtensionSupport` validator for each declared range; and
 7. uses the resulting registry for the complete operation.
 
 The same registry instance is used for validation and persistence within one operation so classification cannot change mid-write.
 
-### 4.3 Manifest extension outcomes
+### 4.3 Portable schema dialect
+
+The initial runtime dialect is `draft2020-12-subset-1`. It is implemented with the Python standard library and supports exactly the JSON Schema features needed by the current web extension:
+
+- annotations: `$schema`, `$id`, `title`, and `description`;
+- structural validation: `type`, `required`, `properties`, and boolean `additionalProperties`;
+- scalar constraints: `enum`, `const`, `pattern`, `minimum`, `maximum`, `minLength`, and `maxLength`;
+- array constraints: `items`, `minItems`, and `maxItems`; and
+- recursive use of the same supported keywords in property and item schemas.
+
+`type` accepts either one JSON type name or an array of unique JSON type names. The supported JSON types are `null`, `boolean`, `integer`, `number`, `string`, `array`, and `object`; booleans are not treated as integers or numbers.
+
+The loader self-validates schema structure for this dialect, including keyword value types, required-property names, regular-expression syntax, numeric and length bounds, and recursive child schemas. Any keyword outside the supported set is rejected. `$ref`, `$defs`, conditional schemas, composition keywords, custom formats, and remote references are intentionally unsupported in this initial dialect.
+
+Later releases may add a new named dialect or expand the implementation behind a new dialect name. Existing catalog entries retain their declared semantics, so this evolution requires neither a catalog-format change nor a Protocol 2 manifest migration.
+
+### 4.4 Manifest extension outcomes
 
 The existing Protocol 2 semantics remain:
 
@@ -141,7 +160,7 @@ The existing Protocol 2 semantics remain:
 
 An owned supported extension may be updated through `save_manifest`. An unknown extension remains immutable during saves and transitions.
 
-### 4.4 Evidence vocabulary
+### 4.5 Evidence vocabulary
 
 Protocol 2 execution evidence uses:
 
@@ -155,6 +174,7 @@ The active web workflow, protocol reference, evaluator, fixtures, and contract t
 Catalog failures are installation or protocol-runtime errors, not manifest outcomes. The runtime raises a stable `ProtocolError` and performs no project-state mutation when it encounters:
 
 - an unsupported catalog version;
+- an unsupported runtime schema dialect;
 - a duplicate namespace or conflicting owner;
 - an empty version list;
 - a malformed, reversed, or overlapping version range;
@@ -162,7 +182,7 @@ Catalog failures are installation or protocol-runtime errors, not manifest outco
 - path traversal or symlink escape outside the extension directory;
 - a missing or unreadable schema;
 - malformed schema JSON; or
-- a schema that fails Draft 2020-12 self-validation.
+- an unsupported schema keyword or a schema that fails structural validation for the declared dialect.
 
 Diagnostics identify the catalog entry and failure category. They must not include manifest secrets, arbitrary schema content, or unsafe filesystem contents.
 
@@ -182,6 +202,7 @@ Test-driven implementation begins with failing tests proving:
 - malformed catalogs fail without changing the manifest;
 - unsafe absolute, traversal, and symlink-escape schema paths are rejected;
 - missing, malformed, and invalid schemas are rejected;
+- unsupported dialects and schema keywords are rejected;
 - empty, reversed, and overlapping version ranges are rejected; and
 - an explicit custom registry overrides bundled discovery.
 
@@ -233,15 +254,16 @@ This stabilization updates the active roadmap to reflect the current decision. I
 This stabilization is complete when:
 
 1. The core runtime contains no hard-coded surface namespace or surface schema behavior.
-2. Each portable bundle recognizes only its owned or routable extension namespaces.
-3. Normal validation, initialization, persistence, transitions, CLI, and evaluator operations automatically use the bundled registry.
-4. Broken catalog release artifacts fail closed without modifying project state.
-5. `e2e.web@1.0` data is typed-validated and can be updated across revisions.
-6. Unsupported web versions produce `extension-incompatible`.
-7. Unknown extensions remain preserved and immutable.
-8. Active execution evidence uses `check_ids` and `outcomes[].check_id` consistently.
-9. The active roadmap no longer claims active Protocol 1 migration compatibility.
-10. Synchronization, skill validation, focused tests, and the full deterministic suite pass.
+2. The portable runtime and its schema validation require only the Python standard library.
+3. Each portable bundle recognizes only its owned or routable extension namespaces.
+4. Normal validation, initialization, persistence, transitions, CLI, and evaluator operations automatically use the bundled registry.
+5. Broken catalog release artifacts fail closed without modifying project state.
+6. `e2e.web@1.0` data is typed-validated and can be updated across revisions.
+7. Unsupported web versions produce `extension-incompatible`.
+8. Unknown extensions remain preserved and immutable.
+9. Active execution evidence uses `check_ids` and `outcomes[].check_id` consistently.
+10. The active roadmap no longer claims active Protocol 1 migration compatibility.
+11. Synchronization, skill validation, focused tests, and the full deterministic suite pass.
 
 ## 10. Delivery Boundary
 
