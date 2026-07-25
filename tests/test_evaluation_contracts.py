@@ -248,7 +248,7 @@ class EvaluatorTests(unittest.TestCase):
         return evaluate_result._check_status_evidence(manifest, {
             "required_journey_ids": ["journey-checkout"],
             "required_execution_evidence_ids": ["evidence-verification"],
-        })
+        }, "web")
 
     def test_detects_forbidden_preserved_file_change(self):
         self._write_manifest()
@@ -330,7 +330,7 @@ class EvaluatorTests(unittest.TestCase):
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
         diagnostics = evaluate(CASES / "verify-pass.json", workspace)
-        self.assertIn("verified status requires successful selected-test execution evidence", diagnostics)
+        self.assertIn("verified status requires successful selected-check execution evidence", diagnostics)
 
     def test_verified_case_rejects_required_label_with_unrelated_successful_execution(self):
         workspace = Path(self.tmp.name) / "verify-unrelated-success"
@@ -750,7 +750,7 @@ class EvaluatorTests(unittest.TestCase):
         )
         self.assertEqual(evidence["check_ids"], ["check-checkout"])
         self.assertEqual(evidence["outcomes"][0]["check_id"], "check-checkout")
-        self.assertTrue(evaluate_result._is_execution_evidence(evidence, {"check-checkout"}))
+        self.assertTrue(evaluate_result._is_execution_evidence(evidence, {"check-checkout"}, "web"))
 
 
 class HostHarnessTests(unittest.TestCase):

@@ -200,7 +200,7 @@ def _check_traceability(manifest: dict[str, Any], expect: dict[str, Any]) -> lis
     ]
 
 
-def _is_execution_evidence(item: Any, check_ids: set[str]) -> bool:
+def _is_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool:
     if not isinstance(item, dict):
         return False
     command = item.get("command")
@@ -220,18 +220,13 @@ def _is_execution_evidence(item: Any, check_ids: set[str]) -> bool:
         for outcome in outcomes
         if isinstance(outcome, dict) and outcome.get("status") == "passed"
     }
-    required_environment = {
-        "browser_project", "os_platform", "runtime", "application_build_ref", "target_reference", "target_tier",
-    }
     return (
         set(selected) <= outcome_ids
-        and isinstance(environment, dict)
-        and required_environment <= set(environment)
-        and all(isinstance(environment[key], str) and environment[key] for key in required_environment)
+        and _execution_environment_is_valid(environment, surface)
     )
 
 
-def _is_failed_execution_evidence(item: Any, check_ids: set[str]) -> bool:
+def _is_failed_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool:
     if not isinstance(item, dict):
         return False
     command = item.get("command")
@@ -257,14 +252,9 @@ def _is_failed_execution_evidence(item: Any, check_ids: set[str]) -> bool:
         for outcome in outcomes
         if isinstance(outcome, dict) and outcome.get("status") == "failed"
     }
-    required_environment = {
-        "browser_project", "os_platform", "runtime", "application_build_ref", "target_reference", "target_tier",
-    }
     return (
         set(selected) <= failed_ids
-        and isinstance(environment, dict)
-        and required_environment <= set(environment)
-        and all(isinstance(environment[key], str) and environment[key] for key in required_environment)
+        and _execution_environment_is_valid(environment, surface)
     )
 
 
@@ -299,7 +289,7 @@ def _linked_classification(
     )
 
 
-def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any], surface: str) -> list[str]:
     status = _run_value(manifest, "status")
     evidence = manifest.get("evidence")
     checks = manifest.get("checks")
@@ -310,9 +300,9 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
     check_ids = _ids(checks)
     diagnostics: list[str] = []
     if status == "verified":
-        successful_execution = any(_is_execution_evidence(item, check_ids) for item in evidence)
+        successful_execution = any(_is_execution_evidence(item, check_ids, surface) for item in evidence)
         if not successful_execution:
-            diagnostics.append("verified status requires successful selected-test execution evidence")
+            diagnostics.append("verified status requires successful selected-check execution evidence")
         scoped_journey_ids = set(expect.get("required_journey_ids", []))
         check_records = checks if isinstance(checks, list) else []
         scoped_check_ids = {
@@ -337,7 +327,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         for required_id in expect.get("required_execution_evidence_ids", []):
             item = evidence_by_id.get(required_id)
             selected_ids = set(item.get("check_ids", [])) if isinstance(item, dict) else set()
-            if not _is_execution_evidence(item, check_ids) or not (
+            if not _is_execution_evidence(item, check_ids, surface) or not (
                 item.get("phase") == expected_phase and scoped_check_ids <= selected_ids
             ):
                 diagnostics.append(
@@ -374,7 +364,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
             for item in evidence
             if isinstance(item, dict)
             and isinstance(item.get("id"), str)
-            and _is_failed_execution_evidence(item, check_ids)
+            and _is_failed_execution_evidence(item, check_ids, surface)
         }
         classification_ids = {
             item["id"]
@@ -618,6 +608,31 @@ def _save_checkpoint(state_dir: Path, case: dict[str, Any], phase: str, manifest
     path.write_text(json.dumps(checkpoint, sort_keys=True), encoding="utf-8")
 
 
+EXECUTION_ENVIRONMENT_FIELDS = {
+    "web": {
+        "browser_project", "os_platform", "runtime", "application_build_ref",
+        "target_reference", "target_tier",
+    },
+    "service": {
+        "protocol", "client", "client_version", "os_platform", "runtime",
+        "application_build_ref", "target_reference", "target_tier",
+    },
+}
+
+SERVICE_PROTOCOLS = {"http", "graphql", "grpc", "websocket", "queue", "stream"}
+DATABASE_CAPABILITIES = {"database-setup", "database-cleanup", "database-diagnostics"}
+
+
+def _execution_environment_is_valid(environment: Any, surface: str) -> bool:
+    required = EXECUTION_ENVIRONMENT_FIELDS.get(surface)
+    return (
+        required is not None
+        and isinstance(environment, dict)
+        and required <= set(environment)
+        and all(isinstance(environment[key], str) and environment[key] for key in required)
+    )
+
+
 def evaluate(
     case_path: str | Path,
     workspace: str | Path,
@@ -635,6 +650,9 @@ def evaluate(
     missing = sorted(required - set(case))
     if missing:
         return [f"invalid case: missing required field: {field}" for field in missing]
+    surface = case.get("surface", "web")
+    if surface not in EXECUTION_ENVIRONMENT_FIELDS:
+        return [f"invalid case: unsupported surface: {surface}"]
     expect, phase_errors = _phase_expectation(case, phase)
     if phase_errors:
         return phase_errors
@@ -671,7 +689,7 @@ def evaluate(
         diagnostics.append(f"manifest autonomy: expected {expected_autonomy}, found {_run_value(manifest, 'autonomy')}")
     diagnostics.extend(_check_required_ids(manifest, expect))
     diagnostics.extend(_check_traceability(manifest, expect))
-    diagnostics.extend(_check_status_evidence(manifest, expect))
+    diagnostics.extend(_check_status_evidence(manifest, expect, surface))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))
