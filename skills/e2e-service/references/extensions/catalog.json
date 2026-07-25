@@ -12,18 +12,6 @@
           "schema": "service.schema.json"
         }
       ]
-    },
-    {
-      "namespace": "e2e.web",
-      "owner": "e2e-web",
-      "versions": [
-        {
-          "minimum": "1.0",
-          "maximum": "1.0",
-          "dialect": "draft2020-12-subset-1",
-          "schema": "web.schema.json"
-        }
-      ]
     }
   ]
 }

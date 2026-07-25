@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:e2e-testing:extension:service:1.0",
+  "type": "object",
+  "required": ["http", "graphql", "grpc", "websocket", "queue", "stream"],
+  "additionalProperties": false,
+  "properties": {
+    "http": {
+      "type": "object",
+      "required": ["interfaces", "interface_id", "source_refs", "config_refs", "client_ref", "command_ref", "contract_refs", "request_conventions", "response_conventions"],
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {"type": "array", "items": {"type": "string"}},
+        "interface_id": {"type": "string"},
+        "source_refs": {"type": "array", "items": {"type": "string"}},
+        "config_refs": {"type": "array", "items": {"type": "string"}},
+        "client_ref": {"type": "string"},
+        "command_ref": {"type": "string"},
+        "contract_refs": {"type": "array", "items": {"type": "string"}},
+        "request_conventions": {"type": "array", "items": {"type": "string"}},
+        "response_conventions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "graphql": {
+      "type": "object",
+      "required": ["interfaces", "interface_id", "source_refs", "config_refs", "client_ref", "command_ref", "contract_refs", "schema_refs", "operation_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {"type": "array", "items": {"type": "string"}},
+        "interface_id": {"type": "string"},
+        "source_refs": {"type": "array", "items": {"type": "string"}},
+        "config_refs": {"type": "array", "items": {"type": "string"}},
+        "client_ref": {"type": "string"},
+        "command_ref": {"type": "string"},
+        "contract_refs": {"type": "array", "items": {"type": "string"}},
+        "schema_refs": {"type": "array", "items": {"type": "string"}},
+        "operation_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "grpc": {
+      "type": "object",
+      "required": ["interfaces", "interface_id", "source_refs", "config_refs", "client_ref", "command_ref", "contract_refs", "descriptor_refs", "service_method_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {"type": "array", "items": {"type": "string"}},
+        "interface_id": {"type": "string"},
+        "source_refs": {"type": "array", "items": {"type": "string"}},
+        "config_refs": {"type": "array", "items": {"type": "string"}},
+        "client_ref": {"type": "string"},
+        "command_ref": {"type": "string"},
+        "contract_refs": {"type": "array", "items": {"type": "string"}},
+        "descriptor_refs": {"type": "array", "items": {"type": "string"}},
+        "service_method_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "websocket": {
+      "type": "object",
+      "required": ["interfaces", "interface_id", "source_refs", "config_refs", "client_ref", "command_ref", "contract_refs", "handshake_refs", "subprotocols", "message_contract_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {"type": "array", "items": {"type": "string"}},
+        "interface_id": {"type": "string"},
+        "source_refs": {"type": "array", "items": {"type": "string"}},
+        "config_refs": {"type": "array", "items": {"type": "string"}},
+        "client_ref": {"type": "string"},
+        "command_ref": {"type": "string"},
+        "contract_refs": {"type": "array", "items": {"type": "string"}},
+        "handshake_refs": {"type": "array", "items": {"type": "string"}},
+        "subprotocols": {"type": "array", "items": {"type": "string"}},
+        "message_contract_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "queue": {
+      "type": "object",
+      "required": ["interfaces", "interface_id", "source_refs", "config_refs", "client_ref", "command_ref", "contract_refs", "destination_ref", "role", "acknowledgement_policy", "delivery_contract_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {"type": "array", "items": {"type": "string"}},
+        "interface_id": {"type": "string"},
+        "source_refs": {"type": "array", "items": {"type": "string"}},
+        "config_refs": {"type": "array", "items": {"type": "string"}},
+        "client_ref": {"type": "string"},
+        "command_ref": {"type": "string"},
+        "contract_refs": {"type": "array", "items": {"type": "string"}},
+        "destination_ref": {"type": "string"},
+        "role": {"type": "string", "enum": ["publish", "consume"]},
+        "acknowledgement_policy": {"type": "string"},
+        "delivery_contract_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "stream": {
+      "type": "object",
+      "required": ["interfaces", "interface_id", "source_refs", "config_refs", "client_ref", "command_ref", "contract_refs", "channel_ref", "role", "cursor_policy", "event_contract_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {"type": "array", "items": {"type": "string"}},
+        "interface_id": {"type": "string"},
+        "source_refs": {"type": "array", "items": {"type": "string"}},
+        "config_refs": {"type": "array", "items": {"type": "string"}},
+        "client_ref": {"type": "string"},
+        "command_ref": {"type": "string"},
+        "contract_refs": {"type": "array", "items": {"type": "string"}},
+        "channel_ref": {"type": "string"},
+        "role": {"type": "string", "enum": ["produce", "consume"]},
+        "cursor_policy": {"type": "string"},
+        "event_contract_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
