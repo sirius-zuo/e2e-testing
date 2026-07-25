@@ -9,6 +9,8 @@ import assert from "node:assert";
 import { requestHttp } from "../test-support/http-client.js";
 import { executeGraphql } from "../test-support/graphql-client.js";
 import { callGrpc } from "../test-support/grpc-client.js";
+import { publishQueue, consumeQueue } from "../test-support/queue-client.js";
+import { appendStream, readStream } from "../test-support/stream-client.js";
 
 describe("Service Contract Fixture", () => {
   it("exposes health endpoint", async () => {
@@ -60,5 +62,74 @@ describe("Service Contract Fixture", () => {
     assert.equal(result.status.message, "NOT_FOUND");
     assert.equal(result.body, null);
     assert.ok(result.trailers && Object.keys(result.trailers).length > 0);
+  });
+});
+
+describe("Service Contract Fixture - Queue", () => {
+  it("publishes and consumes queue message", async () => {
+    const result = await publishQueue({ correlationId: "order-1", type: "order.accepted" });
+    assert.equal(result.delivered, true);
+    assert.equal(result.correlationId, "order-1");
+
+    const delivery = await consumeQueue("order-1", { timeoutMs: 500, acknowledge: false });
+    assert.equal(delivery.message.correlationId, "order-1");
+    assert.equal(delivery.acknowledged, false);
+    assert.equal(delivery.redeliveryCount, 0);
+  });
+
+  it("rejects consume without correlationId", async () => {
+    await assert.rejects(
+      consumeQueue("", { timeoutMs: 500 }),
+      /correlationId is required/
+    );
+  });
+
+  it("rejects non-positive timeout", async () => {
+    await assert.rejects(
+      consumeQueue("order-1", { timeoutMs: -1 }),
+      /timeoutMs must be a positive number/
+    );
+  });
+
+  it("rejects timeout exceeding 5000ms", async () => {
+    await assert.rejects(
+      consumeQueue("order-1", { timeoutMs: 10000 }),
+      /timeoutMs must be bounded at 5000ms/
+    );
+  });
+});
+
+describe("Service Contract Fixture - Stream", () => {
+  it("appends and reads stream event", async () => {
+    const result = await appendStream({ correlationId: "order-1", type: "order.accepted" });
+    assert.equal(result.appended, true);
+    assert.equal(result.correlationId, "order-1");
+
+    const event = await readStream("order-1", { timeoutMs: 500, commit: false });
+    assert.equal(event.event.correlationId, "order-1");
+    assert.equal(event.cursorCommitted, false);
+    assert.equal(event.partition, 0);
+    assert.ok(typeof event.offset === "number");
+  });
+
+  it("rejects read without correlationId", async () => {
+    await assert.rejects(
+      readStream("", { timeoutMs: 500 }),
+      /correlationId is required/
+    );
+  });
+
+  it("rejects non-positive timeout", async () => {
+    await assert.rejects(
+      readStream("order-1", { timeoutMs: -1 }),
+      /timeoutMs must be a positive number/
+    );
+  });
+
+  it("rejects timeout exceeding 5000ms", async () => {
+    await assert.rejects(
+      readStream("order-1", { timeoutMs: 10000 }),
+      /timeoutMs must be bounded at 5000ms/
+    );
   });
 });
