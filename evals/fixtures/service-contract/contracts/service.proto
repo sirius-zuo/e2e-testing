@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package service.contract;
+
+service OrderService {
+  rpc GetOrder (GetOrderRequest) returns (GetOrderResponse);
+}
+
+message GetOrderRequest {
+  string id = 1;
+}
+
+message GetOrderResponse {
+  string id = 1;
+  string status = 2;
+  repeated string items = 3;
+}

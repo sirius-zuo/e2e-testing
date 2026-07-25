@@ -1,0 +1,11 @@
+{
+  "package.json": "ae186811cd477931b5e27eba4ed0f6375584e9ea3972ed0b9e05a65747a06e58",
+  "contracts/schema.graphql": "c2fd86745efdeb0f2d3c7bb4d8f55075c10b46f0de9829fdcd6da88425923531",
+  "contracts/service.proto": "6dee9d8c55ff206b6d864e3f236c4e082a9beb5e69ba06b963ff7ae2eceeea72",
+  "contracts/http-api.json": "18289284e1c50e2a15a9ac3d0efd842c04bd1e9b9116b4f34468b4e16e5e46ad",
+  "tests/fixture-contract.test.js": "091d29b4424129ff8ce36cef6dc3c9d9a0a687279d87bbcdeeb299db24d8e8bd",
+  "test-support/graphql-client.js": "56d416ae73b55fa8c6a7d36240c6ed75565cc857786dc0654ca557415846478e",
+  "test-support/grpc-client.js": "ceb1bb1e96fe773aa8308dc521dc7bf3292287c34fa0a33e09bd44d51dfce5fd",
+  "test-support/http-client.js": "278c9c380c65dc9ce6509dae76c96432a4ae2df770b4cdb85e12fb2d9d2ff9ca",
+  "src/server.js": "45e2606d1eb18bf9345210c2671746daf796d9ea74ec23508ca16903d276e586"
+}

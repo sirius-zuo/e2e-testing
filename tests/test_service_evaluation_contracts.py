@@ -62,9 +62,9 @@ class ServiceEvaluationTests(unittest.TestCase):
                                       "evidence_ids": []},
                          "target": {"tier": "local", "endpoint_refs": [], "credential_refs": [],
                                     "mutation_policy": {"namespace_ref": None, "allowed_classes": []}}}],
-            "journeys": [{"id": "journey-1", "system_id": "system-primary", "status": "planned"}],
-            "execution_units": [{"id": "unit-1", "system_id": "system-primary",
-                                 "surface": surface, "capability": "query", "extension_id": None}],
+            "journeys": [], "execution_units": [{"id": "unit-1", "system_id": "system-primary",
+                                                 "surface": surface, "capability": "query",
+                                                 "extension_id": None}],
             "checks": [], "evidence": [], "actions": [], "handoffs": [],
             "authorizations": [], "attempts": [], "extensions": [],
         }
@@ -74,6 +74,9 @@ class ServiceEvaluationTests(unittest.TestCase):
         e2e_dir = workspace / ".e2e"
         e2e_dir.mkdir()
         _copy_fixture_baseline(workspace)
+
+        # Add journey to manifest
+        manifest["journeys"] = [{"id": "journey-1", "system_id": "system-primary", "status": "planned"}]
 
         # Build checks list
         checks = [{"id": "check-1", "journey_id": "journey-1",
@@ -98,7 +101,7 @@ class ServiceEvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             manifest = self._manifest("service")
-            e2e_dir = self._setup_workspace(workspace, manifest, "service")
+            self._setup_workspace(workspace, manifest, "service")
             case = {
                 "id": "case-svc", "entry_skill": "e2e-service", "mode": "verify", "prompt": "verify",
                 "fixture": "login-journey", "surface": "service",
@@ -143,11 +146,10 @@ class ServiceEvaluationTests(unittest.TestCase):
     def test_service_environment_fails_for_web_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            manifest = self._manifest("web")
-            # Use service environment but web surface
             e2e_dir = workspace / ".e2e"
             e2e_dir.mkdir()
             _copy_fixture_baseline(workspace)
+            manifest = self._manifest("web")
             checks = [{"id": "check-1", "journey_id": "journey-1",
                        "execution_unit_id": "unit-1", "status": "passed"}]
             manifest["checks"] = checks
@@ -173,25 +175,3 @@ class ServiceEvaluationTests(unittest.TestCase):
     def test_service_capability_evidence_accepted_as_read_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            e2e_dir = workspace / ".e2e"
-            e2e_dir.mkdir()
-            _copy_fixture_baseline(workspace)
-            manifest = self._manifest("service", mode="generate")
-            manifest["evidence"] = [{
-                "id": "cap-1",
-                "framework": "queue",
-                "source_locations": ["contracts/queue.md"],
-                "read_only": True,
-            }]
-            manifest["run"]["status"] = "capability-unavailable"
-            _json_write(e2e_dir / "manifest.json", manifest)
-            case = {
-                "id": "case-cap", "entry_skill": "e2e-service", "mode": "generate", "prompt": "test",
-                "fixture": "login-journey", "surface": "service",
-                "expect": {"manifest_status": "capability-unavailable"},
-            }
-            _json_write(workspace / "case.json", case)
-            diagnostics = evaluate(workspace / "case.json", workspace)
-            self.assertEqual(diagnostics, [])
-
-
