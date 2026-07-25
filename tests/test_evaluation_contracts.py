@@ -154,18 +154,24 @@ def _repair_attempt() -> dict:
 class FixtureContractTests(unittest.TestCase):
     def test_cases_have_required_fields_and_existing_fixtures(self):
         case_paths = sorted(CASES.glob("*.json"))
-        self.assertEqual(len(case_paths), 10)
-        self.assertEqual({path.stem for path in case_paths}, {
+        self.assertEqual(len(case_paths), 17)
+        original_cases = {
             "greenfield-source", "live-assisted-generation", "existing-playwright",
             "unsupported-cypress", "conflicting-evidence", "verify-pass",
             "repair-test-defect", "product-defect-handoff", "missing-credentials", "auto-budget",
-        })
+        }
+        service_cases = {
+            "service-generate-all", "service-verify-all", "service-multi-protocol",
+            "service-production-refusal", "service-capability-unavailable",
+            "service-product-defect", "service-database-support",
+        }
+        self.assertEqual({path.stem for path in case_paths}, original_cases | service_cases)
         for path in case_paths:
             with self.subTest(case=path.stem):
                 case = json.loads(path.read_text())
                 self.assertTrue(REQUIRED_CASE_FIELDS <= set(case))
                 self.assertTrue((FIXTURES / case["fixture"]).is_dir())
-                self.assertEqual(case["entry_skill"], "e2e-testing")
+                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service"})
                 self.assertNotIn("e2e-web-playwright", json.dumps(case))
 
     def test_verified_case_expectations_name_the_execution_evidence_to_bind(self):

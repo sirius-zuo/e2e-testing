@@ -1,0 +1,22 @@
+{
+  "id": "service-product-defect",
+  "entry_skill": "e2e-service",
+  "surface": "service",
+  "mode": "verify",
+  "prompt": "Verify the service-contract fixture. Intentionally hit a product-defect route. Record failed execution, linked product-defect classification, artifacts, and a resume command for e2e-service verify.",
+  "fixture": "service-contract",
+  "expect": {
+    "manifest_status": "handoff-required",
+    "required_journey_ids": [
+      "journey-defect"
+    ],
+    "required_evidence_ids": [
+      "evidence-failed",
+      "evidence-classification"
+    ]
+  },
+  "autonomy": {
+    "mode": "explicit",
+    "auto_repair": false
+  }
+}

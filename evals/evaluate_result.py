@@ -633,6 +633,89 @@ def _execution_environment_is_valid(environment: Any, surface: str) -> bool:
     )
 
 
+def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+    """Validate service module binding, production read-only behavior, and cleanup."""
+    diagnostics: list[str] = []
+    units = manifest.get("execution_units", [])
+    evidence = manifest.get("evidence", [])
+    actions = manifest.get("actions", [])
+    checks = manifest.get("checks", [])
+    status = _run_value(manifest, "status")
+
+    # Require every service execution unit to use surface="service" and same service extension
+    service_units = [u for u in units if u.get("surface") == "service"]
+    if not service_units:
+        return diagnostics  # No service units - not an error for this gate
+
+    # Validate all service units reference the service extension
+    for unit in service_units:
+        ext_id = unit.get("extension_id")
+        if ext_id:
+            ext = next((e for e in manifest.get("extensions", []) if e.get("id") == ext_id), None)
+            if ext and ext.get("namespace") != "e2e.service":
+                diagnostics.append(f"execution_unit {unit['id']} references non-service extension")
+
+    # Validate execution evidence protocols match selected units
+    for item in evidence:
+        if not isinstance(item, dict) or item.get("id") == "cap-1":
+            continue
+        env = item.get("execution_environment")
+        if not isinstance(env, dict):
+            continue
+        protocol = env.get("protocol")
+        if protocol and protocol not in SERVICE_PROTOCOLS:
+            diagnostics.append(f"execution evidence has invalid protocol: {protocol}")
+
+    # Require all required multi-protocol checks to have outcomes
+    required_check_ids = expect.get("required_check_ids", [])
+    if required_check_ids:
+        outcome_ids = {
+            o.get("check_id")
+            for e in evidence
+            if isinstance(e, dict)
+            for o in e.get("outcomes", [])
+            if isinstance(o, dict)
+        }
+        for check_id in required_check_ids:
+            if check_id not in outcome_ids:
+                diagnostics.append(f"missing check ID: {check_id}")
+
+    # Production read-only checks
+    for item in evidence:
+        if not isinstance(item, dict) or not isinstance(item.get("execution_environment"), dict):
+            continue
+        env = item["execution_environment"]
+        if env.get("mutation_performed") is True:
+            diagnostics.append("production mutation is not allowed in service verification")
+        if env.get("acknowledged") is True:
+            diagnostics.append("acknowledged is not allowed in service verification")
+        if env.get("cursor_committed") is True:
+            diagnostics.append("cursor_committed is not allowed in service verification")
+
+    # Database support checks
+    for item in evidence:
+        if isinstance(item, dict) and item.get("support_only") is True:
+            if item.get("id") in [c.get("id") for c in checks]:
+                diagnostics.append("database support evidence must not appear in check_ids")
+
+    # Cleanup action checks
+    cleanup_actions = [
+        a for a in actions
+        if isinstance(a, dict) and a.get("capability") == "database-cleanup"
+    ]
+    if cleanup_actions:
+        cleanup_evidence = [
+            e for e in evidence
+            if isinstance(e, dict)
+            and e.get("id") in [a.get("id") for a in cleanup_actions]
+            and e.get("cleanup_successful") is True
+        ]
+        if not cleanup_evidence:
+            diagnostics.append("cleanup incomplete: database-cleanup action without successful cleanup evidence")
+
+    return diagnostics
+
+
 def evaluate(
     case_path: str | Path,
     workspace: str | Path,
@@ -690,6 +773,8 @@ def evaluate(
     diagnostics.extend(_check_required_ids(manifest, expect))
     diagnostics.extend(_check_traceability(manifest, expect))
     diagnostics.extend(_check_status_evidence(manifest, expect, surface))
+    if surface == "service":
+        diagnostics.extend(_check_service_contract(manifest, expect))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))

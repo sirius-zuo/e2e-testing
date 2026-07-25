@@ -1,0 +1,31 @@
+{
+  "id": "service-verify-all",
+  "entry_skill": "e2e-service",
+  "surface": "service",
+  "mode": "verify",
+  "prompt": "Verify all six service boundaries (HTTP, GraphQL, gRPC, WebSocket, queue, stream) against the service-contract fixture. Run only selected checks. Record execution evidence with service environment fields.",
+  "fixture": "service-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "required_journey_ids": [
+      "journey-http",
+      "journey-graphql",
+      "journey-grpc",
+      "journey-websocket",
+      "journey-queue",
+      "journey-stream"
+    ],
+    "required_check_ids": [
+      "check-http",
+      "check-graphql",
+      "check-grpc",
+      "check-websocket",
+      "check-queue",
+      "check-stream"
+    ]
+  },
+  "autonomy": {
+    "mode": "explicit",
+    "auto_repair": false
+  }
+}
