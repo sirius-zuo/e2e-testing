@@ -17,10 +17,22 @@ from protocol.v2.e2e_protocol import (
 )
 
 
-def web_extension(data):
+def service_data(**overrides):
+    value = {
+        name: {"interfaces": []}
+        for name in ("http", "graphql", "grpc", "websocket", "queue", "stream")
+    }
+    value.update(overrides)
+    return value
+
+
+def service_extension(data):
     return {
-        "id": "extension-web", "namespace": "e2e.web", "version": "1.0",
-        "owner": "e2e-web", "data": data,
+        "id": "extension-service",
+        "namespace": "e2e.service",
+        "version": "1.0",
+        "owner": "e2e-service",
+        "data": data,
     }
 
 
@@ -28,6 +40,13 @@ def validate_service_data(data):
     if not isinstance(data, dict) or data.get("driver") not in {"rest", "grpc"}:
         return ["extensions[e2e.service].data.driver is invalid"]
     return []
+
+
+def web_extension(data):
+    return {
+        "id": "extension-web", "namespace": "e2e.web", "version": "1.0",
+        "owner": "e2e-web", "data": data,
+    }
 
 
 class ProtocolV2ExtensionTests(unittest.TestCase):
@@ -162,3 +181,123 @@ class ProtocolV2ExtensionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProtocolError, "extension catalog unavailable"):
                     initialize_manifest(uninitialized, str(root))
             self.assertFalse(uninitialized.exists())
+
+    def test_service_extension_validates_complete_data(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-25T00:00:00Z")
+        data = service_data()
+        for name in ("http", "graphql", "grpc", "websocket", "queue", "stream"):
+            data[name].update({
+                "interface_id": "iface-1", "source_refs": ["src.md"],
+                "config_refs": ["cfg.md"], "client_ref": "client", "command_ref": "cmd",
+                "contract_refs": ["ct.md"],
+            })
+        data["http"].update({"request_conventions": ["rest-req"], "response_conventions": ["rest-resp"]})
+        data["graphql"].update({"schema_refs": ["schema.graphql"], "operation_refs": ["ops.graphql"]})
+        data["grpc"].update({"descriptor_refs": ["svc.proto"], "service_method_refs": ["methods.proto"]})
+        data["websocket"].update({"handshake_refs": ["ws.md"], "subprotocols": ["e2e-v1"], "message_contract_refs": ["msg.md"]})
+        data["queue"].update({"destination_ref": "q-ref", "role": "consume", "acknowledgement_policy": "manual", "delivery_contract_refs": ["del.md"]})
+        data["stream"].update({"channel_ref": "ch-ref", "role": "produce", "cursor_policy": "auto", "event_contract_refs": ["evt.md"]})
+        manifest["extensions"] = [service_extension(data)]
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_service_extension_rejects_missing_required_module(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-25T00:00:00Z")
+        missing = service_data()
+        missing.pop("grpc")
+        manifest["extensions"] = [service_extension(missing)]
+        self.assertIn("extension data missing required property: grpc", validate_manifest(manifest))
+
+    def test_service_extension_rejects_unknown_property_in_module(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-25T00:00:00Z")
+        data = service_data()
+        data["http"]["unexpected_field"] = True
+        manifest["extensions"] = [service_extension(data)]
+        self.assertIn("extension data.http contains unexpected property: unexpected_field", validate_manifest(manifest))
+
+    def test_service_extension_requires_common_fields(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-25T00:00:00Z")
+        data = service_data()
+        for name in ("http", "graphql", "grpc", "websocket", "queue", "stream"):
+            data[name].update({
+                "interfaces": ["i1"], "interface_id": 42, "source_refs": [],
+                "config_refs": [], "client_ref": "c", "command_ref": "cmd",
+                "contract_refs": [],
+            })
+            data[name].pop("request_conventions", None)
+            data[name].pop("response_conventions", None)
+            data[name].pop("schema_refs", None)
+            data[name].pop("operation_refs", None)
+            data[name].pop("descriptor_refs", None)
+            data[name].pop("service_method_refs", None)
+            data[name].pop("handshake_refs", None)
+            data[name].pop("subprotocols", None)
+            data[name].pop("message_contract_refs", None)
+            data[name].pop("destination_ref", None)
+            data[name].pop("role", None)
+            data[name].pop("acknowledgement_policy", None)
+            data[name].pop("delivery_contract_refs", None)
+            data[name].pop("channel_ref", None)
+            data[name].pop("cursor_policy", None)
+            data[name].pop("event_contract_refs", None)
+        manifest["extensions"] = [service_extension(data)]
+        errors = validate_manifest(manifest)
+        self.assertIn("extension data.http.interface_id has invalid type", errors)
+
+    def test_service_extension_with_protocol_specific_fields(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-25T00:00:00Z")
+        data = service_data()
+        for name in ("http", "graphql", "grpc", "websocket", "queue", "stream"):
+            data[name].update({
+                "interface_id": "iface-1", "source_refs": ["src.md"],
+                "config_refs": ["cfg.md"], "client_ref": "client", "command_ref": "cmd",
+                "contract_refs": ["ct.md"],
+            })
+        data["http"].update({
+            "request_conventions": ["rest-conventions"], "response_conventions": ["rest-response"]
+        })
+        data["graphql"].update({
+            "schema_refs": ["schema.graphql"], "operation_refs": ["ops.graphql"]
+        })
+        data["grpc"].update({
+            "descriptor_refs": ["svc.proto"], "service_method_refs": ["methods.proto"]
+        })
+        data["websocket"].update({
+            "handshake_refs": ["ws.md"], "subprotocols": ["e2e-v1"],
+            "message_contract_refs": ["msg-contract.md"]
+        })
+        data["queue"].update({
+            "destination_ref": "q-ref", "role": "consume",
+            "acknowledgement_policy": "manual", "delivery_contract_refs": ["del.md"]
+        })
+        data["stream"].update({
+            "channel_ref": "ch-ref", "role": "consume",
+            "cursor_policy": "auto", "event_contract_refs": ["evt.md"]
+        })
+        manifest["extensions"] = [service_extension(data)]
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_service_extension_rejects_invalid_queue_role(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-25T00:00:00Z")
+        data = service_data()
+        for name in ("http", "graphql", "grpc", "websocket", "queue", "stream"):
+            data[name].update({
+                "interface_id": "i1", "source_refs": [], "config_refs": [],
+                "client_ref": "c", "command_ref": "cmd", "contract_refs": [],
+            })
+        data["queue"].update({"role": "invalid"})
+        manifest["extensions"] = [service_extension(data)]
+        errors = validate_manifest(manifest)
+        self.assertTrue(any("queue.role is not an allowed value" in e for e in errors))
+
+    def test_service_extension_rejects_invalid_stream_role(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-25T00:00:00Z")
+        data = service_data()
+        for name in ("http", "graphql", "grpc", "websocket", "queue", "stream"):
+            data[name].update({
+                "interface_id": "i1", "source_refs": [], "config_refs": [],
+                "client_ref": "c", "command_ref": "cmd", "contract_refs": [],
+            })
+        data["stream"].update({"role": "invalid"})
+        manifest["extensions"] = [service_extension(data)]
+        errors = validate_manifest(manifest)
+        self.assertTrue(any("stream.role is not an allowed value" in e for e in errors))

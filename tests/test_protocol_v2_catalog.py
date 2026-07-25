@@ -18,6 +18,41 @@ CATALOG = ROOT / "protocol/v2/extensions/catalog.json"
 
 
 class PortableSchemaDialectTests(unittest.TestCase):
+    def _service_data(self, **overrides):
+        value = {
+            name: {"interfaces": []}
+            for name in ("http", "graphql", "grpc", "websocket", "queue", "stream")
+        }
+        value.update(overrides)
+        return value
+
+    def test_service_schema_accepts_complete_data_and_rejects_missing_or_extra_fields(self):
+        schema = json.loads((ROOT / "protocol/v2/extensions/service.schema.json").read_text())
+        self.assertEqual(schema["$id"], "urn:e2e-testing:extension:service:1.0")
+        self.assertEqual(schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
+        validate = compile_schema(schema, "draft2020-12-subset-1", "service.schema.json")
+        service = {
+            name: {"interfaces": ["contract-ref"]}
+            for name in ("http", "graphql", "grpc", "websocket", "queue", "stream")
+        }
+        for name in ("http", "graphql", "grpc", "websocket", "queue", "stream"):
+            common = {"interface_id": "iface-1", "source_refs": ["src.md"], "config_refs": ["cfg.md"],
+                      "client_ref": "client", "command_ref": "cmd", "contract_refs": ["ct.md"]}
+            service[name].update(common)
+        service["http"].update({"request_conventions": ["rest-req"], "response_conventions": ["rest-resp"]})
+        service["graphql"].update({"schema_refs": ["schema.graphql"], "operation_refs": ["ops.graphql"]})
+        service["grpc"].update({"descriptor_refs": ["svc.proto"], "service_method_refs": ["methods.proto"]})
+        service["websocket"].update({"handshake_refs": ["ws.md"], "subprotocols": ["e2e-v1"], "message_contract_refs": ["msg.md"]})
+        service["queue"].update({"destination_ref": "q-ref", "role": "consume", "acknowledgement_policy": "manual", "delivery_contract_refs": ["del.md"]})
+        service["stream"].update({"channel_ref": "ch-ref", "role": "produce", "cursor_policy": "auto", "event_contract_refs": ["evt.md"]})
+        self.assertEqual(validate(service), [])
+        missing = self._service_data()
+        missing.pop("grpc")
+        self.assertIn("extension data missing required property: grpc", validate(missing))
+        extra = self._service_data()
+        extra["http"]["unexpected_field"] = True
+        self.assertIn("extension data.http contains unexpected property: unexpected_field", validate(extra))
+
     def test_web_schema_accepts_complete_data_and_rejects_missing_or_extra_fields(self):
         schema = json.loads((ROOT / "protocol/v2/extensions/web.schema.json").read_text())
         validate = compile_schema(schema, "draft2020-12-subset-1", "web.schema.json")
@@ -61,7 +96,8 @@ class ExtensionCatalogTests(unittest.TestCase):
         registry = load_extension_registry(CATALOG)
         self.assertEqual(registry.resolve("e2e.web", "1.0")[0], "supported")
         self.assertEqual(registry.resolve("e2e.web", "1.1")[0], "extension-incompatible")
-        self.assertEqual(registry.resolve("e2e.service", "1.0")[0], "capability-unavailable")
+        self.assertEqual(registry.resolve("e2e.service", "1.0")[0], "supported")
+        self.assertEqual(registry.resolve("e2e.service", "1.1")[0], "extension-incompatible")
         extension = {
             "namespace": "e2e.web", "version": "1.0", "owner": "wrong-owner",
             "data": {"driver": "playwright", "project": {}, "target": {}},
