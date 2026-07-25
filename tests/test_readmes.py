@@ -25,6 +25,7 @@ class ReadmeContractTests(unittest.TestCase):
         for required in (
             "e2e-testing",
             "e2e-web",
+            "e2e-service",
             "Protocol 2",
             "## Installation",
             "## Quick start",
@@ -38,6 +39,7 @@ class ReadmeContractTests(unittest.TestCase):
         for relative in (
             "skills/e2e-testing/SKILL.md",
             "skills/e2e-web/SKILL.md",
+            "skills/e2e-service/SKILL.md",
             "evals/fixtures/README.md",
             "evals/HOST_EVALUATION.md",
         ):
@@ -46,6 +48,17 @@ class ReadmeContractTests(unittest.TestCase):
 
         self.assertNotIn("e2e-web-playwright", text)
         self.assertNotIn("Protocol 1.0", text)
+
+    def test_roadmap_describes_one_atomic_service_delivery(self):
+        roadmap = (ROOT / "docs/roadmap.md").read_text()
+        self.assertIn("one atomic", roadmap)
+        self.assertIn("e2e-service", roadmap)
+        for module in ("REST", "GraphQL", "gRPC", "WebSocket", "queue", "stream"):
+            self.assertIn(module, roadmap)
+        self.assertNotIn("service foundation with REST/HTTP; GraphQL; gRPC", roadmap)
+        for version, capability in (("V3", "Mobile"), ("V4", "Desktop"), ("V5", "composition"), ("V6", "Resilience")):
+            self.assertIn(version, roadmap)
+            self.assertIn(capability, roadmap)
 
     def test_fixture_readme_explains_tracked_integrity_manifests(self):
         text = (ROOT / "evals" / "fixtures" / "README.md").read_text()

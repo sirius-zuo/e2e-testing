@@ -86,7 +86,7 @@ Add black-box service-interface E2E testing and establish the long-lived protoco
 
 ### Delivery decomposition
 
-V2 is one release composed of focused subprojects: Protocol 2 kernel and offline historical migration utility; web surface stabilization; service foundation with REST/HTTP; GraphQL; gRPC; WebSockets; queues; event streams; and final multi-protocol integration. Each subproject receives its own spec, plan, implementation, and verification cycle. All are required before V2 is complete.
+V2 is one release delivering one atomic `e2e-service` skill with six protocol modules (HTTP, GraphQL, gRPC, WebSocket, queue, stream), multi-protocol integration, and shared cross-surface database support. Database support is never an acceptance oracle. Protocol 2 kernel and offline historical migration utility are delivered alongside. All are required before V2 is complete.
 
 ## V3 — Mobile UI
 

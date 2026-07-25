@@ -23,6 +23,13 @@ python3 evals/run_host_eval.py --host codex --case missing-credentials --keep-re
 python3 evals/run_host_eval.py --host codex --case auto-budget --keep-results
 ```
 
+### Service cases
+
+```sh
+python3 evals/run_host_eval.py --host codex --case service-multi-protocol
+python3 evals/run_host_eval.py --host codex --case service-database-support
+```
+
 ## Claude Code
 
 ```sh
@@ -36,6 +43,13 @@ python3 evals/run_host_eval.py --host claude --case repair-test-defect --keep-re
 python3 evals/run_host_eval.py --host claude --case product-defect-handoff --keep-results
 python3 evals/run_host_eval.py --host claude --case missing-credentials --keep-results
 python3 evals/run_host_eval.py --host claude --case auto-budget --keep-results
+```
+
+### Service cases
+
+```sh
+python3 evals/run_host_eval.py --host claude --case service-multi-protocol
+python3 evals/run_host_eval.py --host claude --case service-database-support
 ```
 
 Without `--keep-results`, the workspace and transcript stay in a temporary directory and are removed when the evaluation ends. With it, the harness copies completed artifacts and transcripts into `evals/results/` only after the external run has ended.
