@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,10 @@ SCHEMA_KEYS = {
     "additionalProperties", "enum", "const", "pattern", "minimum", "maximum",
     "minLength", "maxLength", "items", "minItems", "maxItems",
 }
+
+
+def _reject_non_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
 
 
 def _version_tuple(value: str) -> tuple[int, int]:
@@ -108,7 +113,15 @@ def _validate_schema_node(schema: Any, source: str) -> None:
             if key in schema:
                 value = schema[key]
                 integer_bound = key.startswith("minL") or key.startswith("maxL") or key.startswith("minI") or key.startswith("maxI")
-                valid = isinstance(value, int) and not isinstance(value, bool) and value >= 0 if integer_bound else isinstance(value, (int, float)) and not isinstance(value, bool)
+                valid = (
+                    isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                    if integer_bound
+                    else (
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        and (not isinstance(value, float) or math.isfinite(value))
+                    )
+                )
                 if not valid:
                     raise ExtensionCatalogError(f"schema {key} is invalid: {source}")
         if minimum in schema and maximum in schema and schema[minimum] > schema[maximum]:
@@ -226,8 +239,11 @@ class ExtensionRegistry:
 def load_extension_registry(catalog_path: str | Path) -> ExtensionRegistry:
     path = Path(catalog_path)
     try:
-        catalog = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        catalog = json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_constant=_reject_non_json_constant,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise ExtensionCatalogError(f"invalid extension catalog: {path.name}") from exc
     if not isinstance(catalog, dict) or set(catalog) != {"catalog_version", "extensions"}:
         raise ExtensionCatalogError("invalid extension catalog fields")
@@ -263,14 +279,22 @@ def load_extension_registry(catalog_path: str | Path) -> ExtensionRegistry:
             relative = Path(version["schema"])
             if relative.is_absolute():
                 raise ExtensionCatalogError("schema path must be relative")
-            schema_path = (root / relative).resolve()
+            try:
+                schema_path = (root / relative).resolve()
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ExtensionCatalogError(
+                    f"invalid catalog schema path: {namespace}"
+                ) from exc
             try:
                 schema_path.relative_to(root)
             except ValueError as exc:
                 raise ExtensionCatalogError("schema path escapes extension directory") from exc
             try:
-                schema = json.loads(schema_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
+                schema = json.loads(
+                    schema_path.read_text(encoding="utf-8"),
+                    parse_constant=_reject_non_json_constant,
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
                 raise ExtensionCatalogError(f"invalid extension schema: {relative.as_posix()}") from exc
             validator = compile_schema(schema, version["dialect"], relative.as_posix())
             registry.register(ExtensionSupport(

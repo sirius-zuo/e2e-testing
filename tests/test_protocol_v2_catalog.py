@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import os
 import tempfile
 import unittest
@@ -35,6 +36,17 @@ class PortableSchemaDialectTests(unittest.TestCase):
         self.assertEqual(validate(2), [])
         enum_validate = compile_schema({"enum": [1]}, "draft2020-12-subset-1", "enum.json")
         self.assertTrue(enum_validate(True), "JSON true must not equal JSON number 1")
+
+    def test_dialect_rejects_non_finite_numeric_bounds(self):
+        for value in (math.nan, math.inf, -math.inf):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ExtensionCatalogError, "schema minimum is invalid",
+            ):
+                compile_schema(
+                    {"type": "number", "minimum": value},
+                    "draft2020-12-subset-1",
+                    "number.json",
+                )
 
 
 class ExtensionCatalogTests(unittest.TestCase):
@@ -119,6 +131,42 @@ class ExtensionCatalogTests(unittest.TestCase):
                 load_extension_registry(path)
             path.write_text("{", encoding="utf-8")
             with self.assertRaisesRegex(ExtensionCatalogError, "invalid extension catalog"):
+                load_extension_registry(path)
+
+    def test_catalog_rejects_non_standard_json_numbers(self):
+        catalog = {
+            "catalog_version": "1.0",
+            "extensions": [{
+                "namespace": "e2e.web", "owner": "e2e-web",
+                "versions": [{
+                    "minimum": "1.0", "maximum": "1.0",
+                    "dialect": "draft2020-12-subset-1", "schema": "surface.schema.json",
+                }],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = self._write_catalog(root, catalog)
+            (root / "surface.schema.json").write_text(
+                '{"type":"number","minimum":NaN}', encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ExtensionCatalogError, "invalid extension schema"):
+                load_extension_registry(path)
+
+    def test_catalog_normalizes_invalid_schema_path_errors(self):
+        catalog = {
+            "catalog_version": "1.0",
+            "extensions": [{
+                "namespace": "e2e.web", "owner": "e2e-web",
+                "versions": [{
+                    "minimum": "1.0", "maximum": "1.0",
+                    "dialect": "draft2020-12-subset-1", "schema": "bad\0.schema.json",
+                }],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_catalog(Path(tmp), catalog)
+            with self.assertRaisesRegex(ExtensionCatalogError, "invalid catalog schema path"):
                 load_extension_registry(path)
 
     @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows CI")
