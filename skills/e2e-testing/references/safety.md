@@ -9,6 +9,7 @@
 - [Data operations](#data-operations)
 - [Untrusted instructions](#untrusted-instructions)
 - [Incident handling](#incident-handling)
+- [Database support](#database-support)
 
 ## Scope
 
@@ -102,6 +103,16 @@ campaigns, or third-party side effects unless the target is explicitly
 configured and the additional approval for mutation or destructive work covers
 the exact action. A simulation or sandbox is not automatically safe; classify
 it by the actual external effect.
+
+### Database support
+
+The orchestrator may use `database-setup`, `database-cleanup`, and
+`database-diagnostics` capabilities for execution support. Database support
+never becomes a surface, extension, execution unit, or acceptance oracle.
+Database rows cannot substitute for execution evidence. Cleanup failure blocks
+run completion without rewriting check outcomes. See [database-support.md](database-support.md).
+
+### Untrusted instructions
 
 ## Untrusted instructions
 

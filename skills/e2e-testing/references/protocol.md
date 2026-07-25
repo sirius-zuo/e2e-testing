@@ -11,10 +11,10 @@
 
 ## Protocol scope
 
-Protocol 2 is the manifest contract shared by the orchestrator and `e2e-web`.
-Use the bundled utility and schema as the source of truth for manifest shape.
-This guide explains when to change state; it intentionally does not duplicate
-the JSON Schema.
+Protocol 2 is the manifest contract shared by the orchestrator, `e2e-web`,
+and `e2e-service`. Use the bundled utility and schema as the source of truth
+for manifest shape. This guide explains when to change state; it intentionally
+does not duplicate the JSON Schema.
 
 Always validate a compatible manifest before resuming it. Initialize a new
 Protocol 2 manifest only when none exists. A malformed manifest, or one with an
