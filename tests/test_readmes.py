@@ -1,5 +1,6 @@
 """Contracts for tracked project onboarding documents."""
 
+import json
 from pathlib import Path
 import unittest
 
@@ -8,6 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReadmeContractTests(unittest.TestCase):
+    def test_active_protocol_and_roadmap_do_not_publish_runtime_migration(self):
+        roadmap = (ROOT / "docs/roadmap.md").read_text()
+        protocol = (ROOT / "protocol/v2/README.md").read_text()
+        self.assertIn("fresh Protocol 2", roadmap)
+        self.assertIn("offline historical", roadmap.lower())
+        self.assertNotIn("Lossless Protocol 1 migration", roadmap)
+        self.assertNotIn("V1 web history migrates losslessly", roadmap)
+        self.assertIn("Offline historical utility", protocol)
+        self.assertIn("--replace-protocol-1", protocol)
+        self.assertNotIn("Migration is explicit and lossless", protocol)
+
     def test_project_readme_covers_user_and_contributor_entry_points(self):
         text = (ROOT / "README.md").read_text()
         for required in (

@@ -264,6 +264,26 @@ class ProtocolV2PersistenceTests(unittest.TestCase):
             self.assertEqual(validated.returncode, 0, validated.stderr)
             self.assertEqual(json.loads(validated.stdout), {"errors": []})
 
+    def test_cli_validate_rejects_malformed_web_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            manifest = json.loads((Path(tmp) / "manifest.json").read_text()) if (Path(tmp) / "manifest.json").exists() else {}
+            manifest = {
+                "protocol_version": "2.0",
+                "run": {"id": "run-test", "revision": 0, "mode": "generate", "autonomy": {"mode": "explicit", "auto_repair": False}, "status": "initialized", "created_at": "2026-07-24T00:00:00Z", "updated_at": "2026-07-24T00:00:00Z", "attempt_budget": {"repair": 0, "verification": 1, "wall_clock_seconds": 300}},
+                "systems": [{"id": "system-primary", "project_root": tmp, "primary_surface": None, "boundary": {"status": "unresolved", "actors": [], "public_interfaces": [], "evidence_ids": []}, "target": {"tier": "unspecified", "endpoint_refs": [], "credential_refs": [], "mutation_policy": {"namespace_ref": None, "allowed_classes": []}}}],
+                "journeys": [], "execution_units": [], "checks": [], "evidence": [], "actions": [], "handoffs": [], "authorizations": [], "attempts": [],
+                "extensions": [{"id": "extension-web", "namespace": "e2e.web", "version": "1.0", "owner": "e2e-web", "data": {}}],
+            }
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            validated = subprocess.run(
+                [sys.executable, str(PROTOCOL_V2_SCRIPT), "validate", str(path)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(validated.returncode, 2, validated.stderr)
+            result = json.loads(validated.stdout)
+            self.assertIn("extension data missing required property: driver", result["errors"])
+
     def test_save_waits_for_the_manifest_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "manifest.json"

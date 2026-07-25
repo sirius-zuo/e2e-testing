@@ -7,10 +7,18 @@ Protocol 2 is the stable manifest kernel for E2E Testing V2 through V6. Surface-
 ```sh
 python3 protocol/v2/e2e_protocol.py init --project-root PROJECT --output PROJECT/.e2e/manifest.json
 python3 protocol/v2/e2e_protocol.py validate PROJECT/.e2e/manifest.json
+python3 protocol/v2/e2e_protocol.py init --project-root PROJECT --output PROJECT/.e2e/manifest.json --replace-protocol-1
+```
+
+The bundled catalog supplies typed extension validation automatically. Unknown extensions remain preserved and immutable unless an explicitly installed registry supports them.
+
+## Offline historical utility
+
+```sh
 python3 -m protocol.v2.migrate_v1 PROJECT/.e2e/manifest-v1.json --output PROJECT/.e2e/manifest.json
 ```
 
-Migration is explicit and lossless. It never overwrites its source. An identical rerun is accepted; a divergent existing target is rejected.
+`migrate_v1` is an offline historical utility for archival of legacy manifests. Active skills never invoke it and project manifests use explicit `--replace-protocol-1` fresh replacement instead.
 
 ## Compatibility
 

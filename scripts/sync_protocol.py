@@ -1,30 +1,58 @@
 """Synchronize the versioned protocol into standalone skill bundles."""
 
 import argparse
-import shutil
+import json
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CANONICAL_FILES = (
-    (ROOT / "protocol/v2/manifest.schema.json", "references/manifest.schema.json"),
-    (ROOT / "protocol/v2/extensions/web.schema.json", "references/extensions/web.schema.json"),
-    (ROOT / "protocol/v2/e2e_protocol.py", "scripts/e2e_protocol.py"),
+STATIC_FILES = (
+    (ROOT / "protocol/v2/manifest.schema.json", Path("references/manifest.schema.json")),
+    (ROOT / "protocol/v2/e2e_protocol.py", Path("scripts/e2e_protocol.py")),
+    (ROOT / "protocol/v2/extension_catalog.py", Path("scripts/extension_catalog.py")),
 )
-TARGETS = (ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web")
+TARGETS = {
+    ROOT / "skills/e2e-testing": frozenset({"e2e.web"}),
+    ROOT / "skills/e2e-web": frozenset({"e2e.web"}),
+}
+CATALOG_PATH = ROOT / "protocol/v2/extensions/catalog.json"
+
+
+def _catalog_projection(namespaces: frozenset[str]) -> dict:
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    return {
+        "catalog_version": catalog["catalog_version"],
+        "extensions": [
+            entry for entry in catalog["extensions"] if entry["namespace"] in namespaces
+        ],
+    }
+
+
+def _expected_files(namespaces: frozenset[str]) -> dict[Path, bytes]:
+    expected = {relative: source.read_bytes() for source, relative in STATIC_FILES}
+    projection = _catalog_projection(namespaces)
+    expected[Path("references/extensions/catalog.json")] = (
+        json.dumps(projection, indent=2, sort_keys=False) + "\n"
+    ).encode()
+    for entry in projection["extensions"]:
+        for support in entry["versions"]:
+            relative = Path(support["schema"])
+            expected[Path("references/extensions") / relative] = (
+                ROOT / "protocol/v2/extensions" / relative
+            ).read_bytes()
+    return expected
 
 
 def sync(check: bool) -> list[str]:
-    """Copy canonical protocol files, or report stale standalone copies."""
     stale = []
-    for target in TARGETS:
-        for source, relative_destination in CANONICAL_FILES:
-            destination = target / relative_destination
-            if not destination.exists() or destination.read_bytes() != source.read_bytes():
+    for target, namespaces in TARGETS.items():
+        for relative, content in _expected_files(namespaces).items():
+            destination = target / relative
+            if not destination.exists() or destination.read_bytes() != content:
                 stale.append(str(destination.relative_to(ROOT)))
                 if not check:
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(source, destination)
+                    destination.write_bytes(content)
     return stale
 
 
