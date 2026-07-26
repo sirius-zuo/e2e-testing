@@ -47,6 +47,94 @@ def _copy_fixture_baseline(workspace: Path) -> None:
         (workspace / ".fixture-baseline.json").write_text("{}", encoding="utf-8")
 
 
+def _make_extension_data():
+    """Return a minimal valid e2e.service@1.0 extension data envelope."""
+    return {
+        "http": {
+            "interfaces": ["Query"],
+            "interface_id": "http-query",
+            "source_refs": ["contracts/http-api.json"],
+            "config_refs": [],
+            "client_ref": "http-client",
+            "command_ref": "curl",
+            "contract_refs": ["contracts/http-api.json"],
+            "request_conventions": ["application/json"],
+            "response_conventions": ["application/json"],
+        },
+        "graphql": {
+            "interfaces": ["Query"],
+            "interface_id": "graphql-query",
+            "source_refs": ["contracts/schema.graphql"],
+            "config_refs": [],
+            "client_ref": "graphql-client",
+            "command_ref": "graphql-query",
+            "contract_refs": ["contracts/schema.graphql"],
+            "schema_refs": ["contracts/schema.graphql"],
+            "operation_refs": ["contracts/schema.graphql#Query"],
+        },
+        "grpc": {
+            "interfaces": ["OrderService"],
+            "interface_id": "grpc-order",
+            "source_refs": ["contracts/service.proto"],
+            "config_refs": [],
+            "client_ref": "grpc-client",
+            "command_ref": "grpc-call",
+            "contract_refs": ["contracts/service.proto"],
+            "descriptor_refs": ["contracts/service.proto"],
+            "service_method_refs": ["contracts/service.proto#GetOrder"],
+        },
+        "websocket": {
+            "interfaces": ["OrderNotifications"],
+            "interface_id": "ws-order",
+            "source_refs": ["contracts/websocket-messages.json"],
+            "config_refs": [],
+            "client_ref": "ws-client",
+            "command_ref": "ws-connect",
+            "contract_refs": ["contracts/websocket-messages.json"],
+            "handshake_refs": ["contracts/websocket-messages.json"],
+            "subprotocols": ["e2e-v1"],
+            "message_contract_refs": ["contracts/websocket-messages.json"],
+        },
+        "queue": {
+            "interfaces": ["OrderQueue"],
+            "interface_id": "queue-order",
+            "source_refs": ["contracts/queue-contract.json"],
+            "config_refs": [],
+            "client_ref": "queue-client",
+            "command_ref": "queue-publish",
+            "contract_refs": ["contracts/queue-contract.json"],
+            "destination_ref": "orders",
+            "role": "publish",
+            "acknowledgement_policy": "auto",
+            "delivery_contract_refs": ["contracts/queue-contract.json"],
+        },
+        "stream": {
+            "interfaces": ["OrderStream"],
+            "interface_id": "stream-order",
+            "source_refs": ["contracts/stream-contract.json"],
+            "config_refs": [],
+            "client_ref": "stream-client",
+            "command_ref": "stream-read",
+            "contract_refs": ["contracts/stream-contract.json"],
+            "channel_ref": "orders",
+            "role": "consume",
+            "cursor_policy": "auto",
+            "event_contract_refs": ["contracts/stream-contract.json"],
+        },
+    }
+
+
+def _make_extension(extension_id, namespace="e2e.service", version="1.0", owner="e2e-service", data=None):
+    """Build a valid extension envelope."""
+    return {
+        "id": extension_id,
+        "namespace": namespace,
+        "version": version,
+        "owner": owner,
+        "data": data or _make_extension_data(),
+    }
+
+
 class ServiceEvaluationTests(unittest.TestCase):
     def _manifest(self, surface: str, mode: str = "verify") -> dict:
         primary = "service" if surface == "service" else "web"
@@ -64,9 +152,13 @@ class ServiceEvaluationTests(unittest.TestCase):
                                     "mutation_policy": {"namespace_ref": None, "allowed_classes": []}}}],
             "journeys": [], "execution_units": [{"id": "unit-1", "system_id": "system-primary",
                                                  "surface": surface, "capability": "query",
-                                                 "extension_id": None}],
+                                                 "extension_id": "ext-service" if surface == "service" else None}],
             "checks": [], "evidence": [], "actions": [], "handoffs": [],
-            "authorizations": [], "attempts": [], "extensions": [],
+            "authorizations": [], "attempts": [],
+            "extensions": (
+                [_make_extension("ext-service", data=_make_extension_data())]
+                if surface == "service" else []
+            ),
         }
 
     def _setup_workspace(self, workspace: Path, manifest: dict, surface: str) -> Path:
@@ -238,9 +330,13 @@ class ServiceEvaluationGateTests(unittest.TestCase):
                                     "mutation_policy": {"namespace_ref": None, "allowed_classes": []}}}],
             "journeys": [], "execution_units": [{"id": "unit-1", "system_id": "system-primary",
                                                  "surface": surface, "capability": "query",
-                                                 "extension_id": None}],
+                                                 "extension_id": "ext-service" if surface == "service" else None}],
             "checks": [], "evidence": [], "actions": [], "handoffs": [],
-            "authorizations": [], "attempts": [], "extensions": [],
+            "authorizations": [], "attempts": [],
+            "extensions": (
+                [_make_extension("ext-service", data=_make_extension_data())]
+                if surface == "service" else []
+            ),
         }
 
     def test_missing_service_module_outcome_prevents_verified(self):
@@ -424,6 +520,106 @@ class ServiceFixtureContractTests(unittest.TestCase):
             self.assertEqual(body["status"], "ok")
         finally:
             conn.close()
+
+
+class ServiceExtensionBindingTests(unittest.TestCase):
+    def _base_manifest(self):
+        return {
+            "protocol_version": "2.0",
+            "run": {"id": "run-test", "revision": 1, "mode": "verify",
+                    "autonomy": {"mode": "explicit", "auto_repair": False},
+                    "status": "verified",
+                    "created_at": "2026-07-25T00:00:00Z", "updated_at": "2026-07-25T00:00:00Z",
+                    "attempt_budget": {"repair": 0, "verification": 1, "wall_clock_seconds": 300}},
+            "systems": [{"id": "system-primary", "project_root": "/test", "primary_surface": "service",
+                         "boundary": {"status": "declared", "actors": [], "public_interfaces": [],
+                                      "evidence_ids": []},
+                         "target": {"tier": "local", "endpoint_refs": [], "credential_refs": [],
+                                    "mutation_policy": {"namespace_ref": None, "allowed_classes": []}}}],
+            "journeys": [{"id": "journey-1", "system_id": "system-primary", "status": "planned"}],
+            "checks": [{"id": "check-1", "journey_id": "journey-1", "execution_unit_id": "unit-1",
+                        "status": "passed"}],
+            "evidence": [{
+                "id": "exec-1", "command": "e2e-service verify", "exit_code": 0, "duration_ms": 100,
+                "check_ids": ["check-1"], "outcomes": [{"check_id": "check-1", "status": "passed"}],
+                "execution_environment": SERVICE_ENVIRONMENT,
+            }],
+            "actions": [], "handoffs": [], "authorizations": [], "attempts": [],
+        }
+
+    def _run(self, execution_units, extensions):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            e2e_dir = workspace / ".e2e"
+            e2e_dir.mkdir()
+            _copy_fixture_baseline(workspace)
+            manifest = self._base_manifest()
+            manifest["execution_units"] = execution_units
+            manifest["extensions"] = extensions
+            _json_write(e2e_dir / "manifest.json", manifest)
+            case = {
+                "id": "case-ext", "entry_skill": "e2e-service", "mode": "verify", "prompt": "test",
+                "fixture": "login-journey", "surface": "service",
+                "expect": {"manifest_status": "verified"},
+            }
+            _json_write(workspace / "case.json", case)
+            return evaluate(workspace / "case.json", workspace)
+
+    def test_missing_extension_binding_is_rejected(self):
+        diagnostics = self._run(
+            [{"id": "unit-1", "system_id": "system-primary", "surface": "service",
+              "capability": "query", "extension_id": None}],
+            [],
+        )
+        self.assertIn(
+            "execution_unit unit-1 does not reference the e2e.service@1.0 extension", diagnostics,
+        )
+
+    def test_dangling_extension_binding_is_rejected(self):
+        diagnostics = self._run(
+            [{"id": "unit-1", "system_id": "system-primary", "surface": "service",
+              "capability": "query", "extension_id": "ext-missing"}],
+            [],
+        )
+        # Protocol validator catches dangling refs first; the gate adds a second diagnostic.
+        self.assertTrue(
+            any("unknown" in d or "does not reference the e2e.service@1.0 extension" in d for d in diagnostics),
+        )
+
+    def test_wrong_extension_version_is_rejected(self):
+        diagnostics = self._run(
+            [{"id": "unit-1", "system_id": "system-primary", "surface": "service",
+              "capability": "query", "extension_id": "ext-service"}],
+            [_make_extension("ext-service", version="2.0", data=_make_extension_data())],
+        )
+        self.assertIn(
+            "execution_unit unit-1 does not reference the e2e.service@1.0 extension", diagnostics,
+        )
+
+    def test_multiple_service_extensions_are_rejected(self):
+        diagnostics = self._run(
+            [
+                {"id": "unit-1", "system_id": "system-primary", "surface": "service",
+                 "capability": "query", "extension_id": "ext-a"},
+                {"id": "unit-2", "system_id": "system-primary", "surface": "service",
+                 "capability": "query", "extension_id": "ext-b"},
+            ],
+            [
+                _make_extension("ext-a", data=_make_extension_data()),
+                _make_extension("ext-b", data=_make_extension_data()),
+            ],
+        )
+        self.assertIn(
+            "service execution units must share a single e2e.service extension", diagnostics,
+        )
+
+    def test_valid_shared_extension_binding_passes(self):
+        diagnostics = self._run(
+            [{"id": "unit-1", "system_id": "system-primary", "surface": "service",
+              "capability": "query", "extension_id": "ext-service"}],
+            [_make_extension("ext-service", data=_make_extension_data())],
+        )
+        self.assertEqual(diagnostics, [])
 
 
 if __name__ == "__main__":

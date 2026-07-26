@@ -633,27 +633,38 @@ def _execution_environment_is_valid(environment: Any, surface: str) -> bool:
     )
 
 
-def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], surface: str) -> list[str]:
     """Validate service module binding, production read-only behavior, and cleanup."""
     diagnostics: list[str] = []
     units = manifest.get("execution_units", [])
     evidence = manifest.get("evidence", [])
     actions = manifest.get("actions", [])
     checks = manifest.get("checks", [])
+    check_ids = _ids(checks)
     status = _run_value(manifest, "status")
 
     # Require every service execution unit to use surface="service" and same service extension
-    service_units = [u for u in units if u.get("surface") == "service"]
+    service_units = [u for u in units if isinstance(u, dict) and u.get("surface") == "service"]
     if not service_units:
         return diagnostics  # No service units - not an error for this gate
 
-    # Validate all service units reference the service extension
+    # Require every service unit to bind the single shared e2e.service@1.0 extension
+    extensions_by_id = {
+        e["id"]: e for e in manifest.get("extensions", [])
+        if isinstance(e, dict) and isinstance(e.get("id"), str)
+    }
+    bound_extension_ids: set[str] = set()
     for unit in service_units:
         ext_id = unit.get("extension_id")
-        if ext_id:
-            ext = next((e for e in manifest.get("extensions", []) if e.get("id") == ext_id), None)
-            if ext and ext.get("namespace") != "e2e.service":
-                diagnostics.append(f"execution_unit {unit['id']} references non-service extension")
+        ext = extensions_by_id.get(ext_id) if isinstance(ext_id, str) else None
+        if ext is None or ext.get("namespace") != "e2e.service" or ext.get("version") != "1.0":
+            diagnostics.append(
+                f"execution_unit {unit.get('id')} does not reference the e2e.service@1.0 extension"
+            )
+            continue
+        bound_extension_ids.add(ext_id)
+    if len(bound_extension_ids) > 1:
+        diagnostics.append("service execution units must share a single e2e.service extension")
 
     # Validate execution evidence protocols match selected units
     for item in evidence:
@@ -774,7 +785,7 @@ def evaluate(
     diagnostics.extend(_check_traceability(manifest, expect))
     diagnostics.extend(_check_status_evidence(manifest, expect, surface))
     if surface == "service":
-        diagnostics.extend(_check_service_contract(manifest, expect))
+        diagnostics.extend(_check_service_contract(manifest, expect, surface))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))
