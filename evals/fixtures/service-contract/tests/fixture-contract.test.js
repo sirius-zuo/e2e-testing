@@ -1,16 +1,47 @@
 /**
  * Service contract fixture tests.
- * Tests synchronous HTTP, GraphQL, and gRPC adapters against the fixture server.
- * Requires the fixture server to be running on port 43170.
+ * Tests synchronous HTTP, GraphQL, gRPC, and WebSocket adapters, plus
+ * asynchronous queue/stream adapters, against the fixture server.
+ * Starts and stops the fixture server itself; no external process required.
  */
 
-import { describe, it } from "node:test";
+import { before, after, describe, it } from "node:test";
 import assert from "node:assert";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { requestHttp } from "../test-support/http-client.js";
 import { executeGraphql } from "../test-support/graphql-client.js";
 import { callGrpc } from "../test-support/grpc-client.js";
+import { exchangeWebSocket } from "../test-support/websocket-client.js";
 import { publishQueue, consumeQueue } from "../test-support/queue-client.js";
 import { appendStream, readStream } from "../test-support/stream-client.js";
+
+const FIXTURE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+let serverProcess;
+
+before(async () => {
+  serverProcess = spawn(process.execPath, ["src/server.js"], {
+    cwd: FIXTURE_ROOT,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      const result = await requestHttp({ method: "GET", path: "/health" });
+      if (result.status === 200) return;
+    } catch {
+      // Server socket not accepting connections yet; keep polling.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("fixture server did not become ready within 5000ms");
+});
+
+after(() => {
+  serverProcess.kill();
+});
 
 describe("Service Contract Fixture", () => {
   it("exposes health endpoint", async () => {
