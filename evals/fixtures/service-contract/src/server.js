@@ -6,6 +6,7 @@
 
 import http from "node:http";
 import { createHash } from "node:crypto";
+import { encodeFrame, decodeFrames } from "./ws-frames.js";
 
 const PORT = 43170;
 const HOST = "127.0.0.1";
@@ -171,23 +172,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // WebSocket endpoint (upgrade)
-  if (url.searchParams.get("ws") === "true" && req.headers.upgrade === "websocket") {
-    // Simple WebSocket handshake
-    const key = req.headers["sec-websocket-key"] || "";
-    const accept = createHash("sha1")
-      .update(key + "258EAFA5-E914-47DA-95CA-5AB9D8B23D4E")
-      .digest("base64");
-
-    res.writeHead(101, {
-      "Upgrade": "websocket",
-      "Connection": "Upgrade",
-      "Sec-WebSocket-Accept": accept,
-    });
-    res.end();
-    return;
-  }
-
   // Queue publish
   if (path === "/queue/publish" && req.method === "POST") {
     try {
@@ -271,6 +255,57 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Service contract fixture listening on ${HOST}:${PORT}`);
+});
+
+// Real WebSocket upgrade (RFC 6455): Node only emits 'upgrade', never 'request', for these.
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url || `/`, `http://${HOST}:${PORT}`);
+  const key = req.headers["sec-websocket-key"];
+  if (url.searchParams.get("ws") !== "true" || (req.headers.upgrade || "").toLowerCase() !== "websocket" || !key) {
+    socket.destroy();
+    return;
+  }
+
+  const accept = createHash("sha1")
+    .update(key + "258EAFA5-E914-47DA-95CA-5AB9D8B23D4E")
+    .digest("base64");
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${accept}`,
+      "Sec-WebSocket-Protocol: e2e-v1",
+      "\r\n",
+    ].join("\r\n")
+  );
+
+  let buffer = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
+  socket.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    const { messages, remainder } = decodeFrames(buffer);
+    buffer = remainder;
+    for (const message of messages) {
+      if (message.__close) {
+        socket.end();
+        return;
+      }
+      if (message.type === "subscribe" && typeof message.orderId === "string" && message.orderId) {
+        const order = orders.get(message.orderId);
+        socket.write(
+          encodeFrame(
+            {
+              type: "notification",
+              correlationId: message.orderId,
+              data: order ? { ...order, __typename: "Order" } : { error: `Order ${message.orderId} not found` },
+            },
+            { mask: false }
+          )
+        );
+      }
+    }
+  });
+  socket.on("error", () => socket.destroy());
 });
 
 // Graceful shutdown

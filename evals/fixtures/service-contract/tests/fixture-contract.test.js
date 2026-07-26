@@ -96,6 +96,29 @@ describe("Service Contract Fixture", () => {
   });
 });
 
+describe("Service Contract Fixture - WebSocket", () => {
+  it("subscribes and receives an order notification", async () => {
+    const result = await exchangeWebSocket(
+      [{ type: "subscribe", orderId: "order-1" }],
+      { timeoutMs: 500 }
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.messages.length, 1);
+    assert.equal(result.messages[0].type, "notification");
+    assert.equal(result.messages[0].correlationId, "order-1");
+    assert.equal(result.messages[0].data.status, "accepted");
+  });
+
+  it("sends no notification for an unsupported message type", async () => {
+    const result = await exchangeWebSocket(
+      [{ type: "ping" }],
+      { timeoutMs: 300 }
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.messages.length, 0);
+  });
+});
+
 describe("Service Contract Fixture - Queue", () => {
   it("publishes and consumes queue message", async () => {
     const result = await publishQueue({ correlationId: "order-1", type: "order.accepted" });
