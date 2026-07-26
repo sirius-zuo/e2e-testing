@@ -203,6 +203,8 @@ def _check_traceability(manifest: dict[str, Any], expect: dict[str, Any]) -> lis
 def _is_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool:
     if not isinstance(item, dict):
         return False
+    if item.get("support_only") is True:
+        return False
     command = item.get("command")
     if not isinstance(command, str) or not command.strip():
         return False
@@ -228,6 +230,8 @@ def _is_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool
 
 def _is_failed_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool:
     if not isinstance(item, dict):
+        return False
+    if item.get("support_only") is True:
         return False
     command = item.get("command")
     command_ref = item.get("command_ref")
@@ -706,7 +710,7 @@ def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], su
     # Database support checks
     for item in evidence:
         if isinstance(item, dict) and item.get("support_only") is True:
-            if item.get("id") in [c.get("id") for c in checks]:
+            if item.get("check_ids"):
                 diagnostics.append("database support evidence must not appear in check_ids")
 
     # Cleanup action checks

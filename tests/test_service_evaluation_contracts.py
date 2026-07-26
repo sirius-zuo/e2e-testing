@@ -492,6 +492,35 @@ class ServiceEvaluationGateTests(unittest.TestCase):
                 diagnostics,
             )
 
+    def test_support_only_evidence_cannot_satisfy_execution_or_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            e2e_dir = workspace / ".e2e"
+            e2e_dir.mkdir()
+            _copy_fixture_baseline(workspace)
+            manifest = self._manifest("service")
+            manifest["evidence"] = [{
+                "id": "db-support-1", "command": "select 1", "exit_code": 0, "duration_ms": 5,
+                "check_ids": ["check-1"], "outcomes": [{"check_id": "check-1", "status": "passed"}],
+                "execution_environment": SERVICE_ENVIRONMENT,
+                "support_only": True,
+            }]
+            manifest["checks"] = [{"id": "check-1", "journey_id": "journey-1",
+                                   "execution_unit_id": "unit-1", "status": "passed"}]
+            manifest["journeys"] = [{"id": "journey-1", "system_id": "system-primary", "status": "planned"}]
+            _json_write(e2e_dir / "manifest.json", manifest)
+            case = {
+                "id": "case-db-oracle", "entry_skill": "e2e-service", "mode": "verify", "prompt": "test",
+                "fixture": "login-journey", "surface": "service",
+                "expect": {"manifest_status": "verified"},
+            }
+            _json_write(workspace / "case.json", case)
+            diagnostics = evaluate(workspace / "case.json", workspace)
+            self.assertIn(
+                "verified status requires successful selected-check execution evidence", diagnostics,
+            )
+            self.assertIn("database support evidence must not appear in check_ids", diagnostics)
+
     def test_cleanup_failure_blocks_completion(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
