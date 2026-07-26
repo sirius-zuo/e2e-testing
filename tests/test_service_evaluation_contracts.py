@@ -272,7 +272,8 @@ class ServiceEvaluationTests(unittest.TestCase):
             manifest = self._manifest("service", mode="generate")
             manifest["evidence"] = [{
                 "id": "cap-1",
-                "framework": "queue",
+                "surface": "service",
+                "adapter": "queue",
                 "source_locations": ["contracts/queue.md"],
                 "read_only": True,
             }]
@@ -561,7 +562,7 @@ class ServiceEvaluationGateTests(unittest.TestCase):
             _copy_fixture_baseline(workspace)
             manifest = self._manifest("service", mode="generate")
             manifest["evidence"] = [{
-                "id": "cap-1", "framework": "stream",
+                "id": "cap-1", "surface": "service", "adapter": "stream",
                 "source_locations": ["contracts/stream.md"],
                 "read_only": False,
             }]
@@ -574,7 +575,7 @@ class ServiceEvaluationGateTests(unittest.TestCase):
             }
             _json_write(workspace / "case.json", case)
             diagnostics = evaluate(workspace / "case.json", workspace)
-            self.assertIn("missing capability-unavailable framework detection evidence", diagnostics)
+            self.assertIn("missing capability-unavailable adapter detection evidence", diagnostics)
 
 
 class ServiceFixtureContractTests(unittest.TestCase):

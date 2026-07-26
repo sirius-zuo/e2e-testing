@@ -351,16 +351,32 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any], sur
                     "required execution evidence is not bound to this phase, revision, and scoped tests: "
                     f"{required_id}"
                 )
-    if status == "capability-unavailable" and not any(
-        isinstance(item, dict)
-        and isinstance(item.get("framework"), str)
-        and item["framework"]
-        and isinstance(item.get("source_locations"), list)
-        and bool(item["source_locations"])
-        and item.get("read_only") is True
-        for item in evidence
-    ):
-        diagnostics.append("missing capability-unavailable framework detection evidence")
+    if status == "capability-unavailable":
+        if surface == "web":
+            valid_capability_evidence = any(
+                isinstance(item, dict)
+                and isinstance(item.get("framework"), str)
+                and item["framework"]
+                and isinstance(item.get("source_locations"), list)
+                and bool(item["source_locations"])
+                and item.get("read_only") is True
+                for item in evidence
+            )
+            if not valid_capability_evidence:
+                diagnostics.append("missing capability-unavailable framework detection evidence")
+        else:
+            valid_capability_evidence = any(
+                isinstance(item, dict)
+                and item.get("surface") == surface
+                and isinstance(item.get("adapter"), str)
+                and item["adapter"]
+                and isinstance(item.get("source_locations"), list)
+                and bool(item["source_locations"])
+                and item.get("read_only") is True
+                for item in evidence
+            )
+            if not valid_capability_evidence:
+                diagnostics.append("missing capability-unavailable adapter detection evidence")
     if status == "handoff-required":
         evidence_ids = _ids(evidence)
         failed_evidence_ids = {
