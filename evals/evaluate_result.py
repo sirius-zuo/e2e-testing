@@ -677,18 +677,16 @@ def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], su
         if protocol and protocol not in SERVICE_PROTOCOLS:
             diagnostics.append(f"execution evidence has invalid protocol: {protocol}")
 
-    # Require all required multi-protocol checks to have outcomes
+    # Require all required multi-protocol checks to be covered by genuine, passing,
+    # bound execution evidence (not merely by any outcome record, regardless of status).
     required_check_ids = expect.get("required_check_ids", [])
     if required_check_ids:
-        outcome_ids = {
-            o.get("check_id")
-            for e in evidence
-            if isinstance(e, dict)
-            for o in e.get("outcomes", [])
-            if isinstance(o, dict)
-        }
+        passed_check_ids: set[str] = set()
+        for item in evidence:
+            if _is_execution_evidence(item, check_ids, surface):
+                passed_check_ids.update(item.get("check_ids", []))
         for check_id in required_check_ids:
-            if check_id not in outcome_ids:
+            if check_id not in passed_check_ids:
                 diagnostics.append(f"missing check ID: {check_id}")
 
     # Production read-only checks (scoped to production-tier evidence only)

@@ -371,6 +371,45 @@ class ServiceEvaluationGateTests(unittest.TestCase):
             diagnostics = evaluate(workspace / "case.json", workspace)
             self.assertIn("missing check ID: check-graphql", diagnostics)
 
+    def test_multi_protocol_check_with_failed_outcome_is_not_covered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            e2e_dir = workspace / ".e2e"
+            e2e_dir.mkdir()
+            _copy_fixture_baseline(workspace)
+            manifest = self._manifest("service")
+            manifest["evidence"] = [
+                {
+                    "id": "exec-http", "command": "e2e-service verify", "exit_code": 0, "duration_ms": 100,
+                    "check_ids": ["check-http"], "outcomes": [{"check_id": "check-http", "status": "passed"}],
+                    "execution_environment": SERVICE_ENVIRONMENT,
+                },
+                {
+                    "id": "exec-graphql", "command": "e2e-service verify", "exit_code": 1, "duration_ms": 100,
+                    "check_ids": ["check-graphql"], "outcomes": [{"check_id": "check-graphql", "status": "failed"}],
+                    "execution_environment": SERVICE_ENVIRONMENT,
+                },
+            ]
+            manifest["checks"] = [
+                {"id": "check-http", "journey_id": "journey-1", "execution_unit_id": "unit-1",
+                 "status": "passed"},
+                {"id": "check-graphql", "journey_id": "journey-1", "execution_unit_id": "unit-1",
+                 "status": "failed"},
+            ]
+            manifest["journeys"] = [{"id": "journey-1", "system_id": "system-primary", "status": "planned"}]
+            _json_write(e2e_dir / "manifest.json", manifest)
+            case = {
+                "id": "case-multi-fail", "entry_skill": "e2e-service", "mode": "verify", "prompt": "test",
+                "fixture": "login-journey", "surface": "service",
+                "expect": {
+                    "manifest_status": "verified",
+                    "required_check_ids": ["check-http", "check-graphql"],
+                },
+            }
+            _json_write(workspace / "case.json", case)
+            diagnostics = evaluate(workspace / "case.json", workspace)
+            self.assertIn("missing check ID: check-graphql", diagnostics)
+
     def test_local_mutation_is_allowed_in_service(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
