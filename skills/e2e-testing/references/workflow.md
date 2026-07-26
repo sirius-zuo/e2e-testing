@@ -106,6 +106,7 @@ for delegation. After the framework gate passes, persist the action first,
 including its inputs, `run.revision`, target journey IDs, and expected resume
 condition. For an unavailable capability, persist the durable manifest outcome
 only after the read-only gate; it is not a license to bootstrap, migrate, or
+mutate test infrastructure.
 
 ### Service boundary gate
 
@@ -119,7 +120,6 @@ When service boundaries are confirmed:
   support. See [database-support.md](database-support.md) for rules.
 - Database actions use existing core records; they are never an acceptance oracle.
 - Cleanup failure blocks run completion without rewriting check outcomes.
-mutate test infrastructure.
 
 ## Actions and handoffs
 
