@@ -89,7 +89,10 @@ prohibited during production verification:
 - Message acknowledgements or redeliveries
 - Cursor commits or offset updates
 - Queue or stream publication
-- Database setup, cleanup, or diagnostic queries
+- Database setup or cleanup
+- Database diagnostic queries, unless separately authorized as narrow, read-only,
+  sanitized production diagnostics per
+  [database-support.md](../../e2e-testing/references/database-support.md)
 - Any action that produces an external side effect
 
 Production verification evidence must declare `mutation_performed` as `false`
