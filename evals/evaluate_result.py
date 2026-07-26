@@ -691,11 +691,13 @@ def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], su
             if check_id not in outcome_ids:
                 diagnostics.append(f"missing check ID: {check_id}")
 
-    # Production read-only checks
+    # Production read-only checks (scoped to production-tier evidence only)
     for item in evidence:
         if not isinstance(item, dict) or not isinstance(item.get("execution_environment"), dict):
             continue
         env = item["execution_environment"]
+        if env.get("target_tier") != "production":
+            continue
         if env.get("mutation_performed") is True:
             diagnostics.append("production mutation is not allowed in service verification")
         if env.get("acknowledged") is True:
