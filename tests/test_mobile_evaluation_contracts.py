@@ -285,6 +285,25 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_required_mobile_check_must_be_manifest_passed(self):
+        def mark_matching_required_check_failed(manifest):
+            manifest["checks"][0]["status"] = "failed"
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_check_ids": ["check-mobile"],
+            },
+            mutate_manifest=mark_matching_required_check_failed,
+        )
+        self.assertIn(
+            "required mobile check lacks passing execution evidence: check-mobile",
+            diagnostics,
+        )
+
     def test_mobile_execution_target_must_match_bound_lifecycle(self):
         environment = {**MOBILE_ENVIRONMENT, "target_reference": "target-other"}
         diagnostics = self._evaluate(

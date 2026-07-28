@@ -1094,10 +1094,18 @@ def _check_mobile_contract(
             and final_revision == consumed_revision + 1
         ):
             passing_mobile_evidence.append(item)
+    manifest_passed_check_ids = {
+        check.get("id")
+        for check in manifest.get("checks", [])
+        if isinstance(check, dict)
+        and isinstance(check.get("id"), str)
+        and check.get("status") == "passed"
+    }
     passed_check_ids = {
         check_id
         for item in passing_mobile_evidence
         for check_id in item.get("check_ids", [])
+        if check_id in manifest_passed_check_ids
     }
     for check_id in sorted(required_check_ids - passed_check_ids):
         diagnostics.append(
