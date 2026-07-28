@@ -647,6 +647,7 @@ EXECUTION_ENVIRONMENT_FIELDS = {
 MOBILE_DRIVERS = {"appium", "maestro"}
 MOBILE_PLATFORMS = {"ios", "android"}
 MOBILE_TARGET_KINDS = {"simulator", "emulator", "real", "remote"}
+MOBILE_EVIDENCE_ORIGINS = {"platform", "fixture"}
 
 SERVICE_PROTOCOLS = {"http", "graphql", "grpc", "websocket", "queue", "stream"}
 DATABASE_CAPABILITIES = {"database-setup", "database-cleanup", "database-diagnostics"}
@@ -825,6 +826,7 @@ def _check_mobile_contract(
     units = manifest.get("execution_units", [])
     evidence = manifest.get("evidence", [])
     actions = manifest.get("actions", [])
+    check_ids = _ids(manifest.get("checks"))
     mobile_units = [
         item for item in units
         if isinstance(item, dict) and item.get("surface") == "mobile"
@@ -952,6 +954,86 @@ def _check_mobile_contract(
                     "requires a disposable virtual target"
                 )
 
+        lifecycle_by_unit = {
+            profile.get("execution_unit_id"): profile
+            for profile in lifecycle_profiles
+            if isinstance(profile.get("execution_unit_id"), str)
+        }
+        units_by_id = {
+            unit.get("id"): unit
+            for unit in mobile_units
+            if isinstance(unit.get("id"), str)
+        }
+        systems_by_id = {
+            system.get("id"): system
+            for system in _systems(manifest)
+            if isinstance(system.get("id"), str)
+        }
+        for item in evidence:
+            if not _is_execution_evidence(item, check_ids, surface):
+                continue
+            environment = item["execution_environment"]
+            target_reference = environment.get("target_reference")
+            artifact_reference = environment.get("application_build_ref")
+            target = targets.get(target_reference)
+            artifact = artifacts.get(artifact_reference)
+
+            if target is None:
+                diagnostics.append(
+                    "mobile execution evidence references unknown target: "
+                    f"{target_reference}"
+                )
+                continue
+            if artifact is None:
+                diagnostics.append(
+                    "mobile execution evidence references unknown artifact: "
+                    f"{artifact_reference}"
+                )
+                continue
+
+            driver = drivers.get(target.get("driver_id"))
+            if (
+                not isinstance(driver, dict)
+                or environment.get("driver") != driver.get("kind")
+                or environment.get("driver_version") != driver.get("version")
+                or environment.get("platform") != target.get("platform")
+                or environment.get("os_version") != target.get("os_version")
+                or environment.get("target_kind") != target.get("kind")
+                or artifact.get("platform") != target.get("platform")
+            ):
+                diagnostics.append(
+                    f"mobile execution evidence does not match target {target_reference}"
+                )
+
+            selected_units = {
+                check.get("execution_unit_id")
+                for check in manifest.get("checks", [])
+                if isinstance(check, dict) and check.get("id") in item.get("check_ids", [])
+            }
+            for unit_id in selected_units:
+                profile = lifecycle_by_unit.get(unit_id)
+                unit = units_by_id.get(unit_id)
+                system = (
+                    systems_by_id.get(unit.get("system_id"))
+                    if isinstance(unit, dict)
+                    else None
+                )
+                target_tier = (
+                    system.get("target", {}).get("tier")
+                    if isinstance(system, dict)
+                    and isinstance(system.get("target"), dict)
+                    else None
+                )
+                if (
+                    not isinstance(profile, dict)
+                    or profile.get("target_id") != target_reference
+                    or artifact_reference not in profile.get("artifact_ids", [])
+                    or environment.get("target_tier") != target_tier
+                ):
+                    diagnostics.append(
+                        f"mobile execution evidence is not bound to lifecycle for {unit_id}"
+                    )
+
     for item in evidence:
         if not isinstance(item, dict):
             continue
@@ -973,10 +1055,12 @@ def _check_mobile_contract(
                 f"mobile execution evidence has invalid target kind: "
                 f"{environment.get('target_kind')}"
             )
-        if (
-            environment.get("evidence_origin") == "fixture"
-            and not expect.get("allow_fixture_evidence", False)
-        ):
+        origin = environment.get("evidence_origin")
+        if origin not in MOBILE_EVIDENCE_ORIGINS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid evidence origin: {origin}"
+            )
+        elif origin == "fixture" and not expect.get("allow_fixture_evidence", False):
             diagnostics.append(
                 "fixture evidence cannot satisfy live mobile acceptance"
             )
@@ -990,6 +1074,35 @@ def _check_mobile_contract(
                     "production external effects are not allowed "
                     "in mobile verification"
                 )
+
+    required_check_ids = {
+        item
+        for item in expect.get("required_check_ids", [])
+        if isinstance(item, str)
+    }
+    expected_phase = expect.get("_phase_name", _run_value(manifest, "mode"))
+    final_revision = _run_value(manifest, "revision")
+    passing_mobile_evidence = []
+    for item in evidence:
+        if not _is_execution_evidence(item, check_ids, surface):
+            continue
+        consumed_revision = item.get("manifest_revision_consumed")
+        if (
+            item.get("phase") == expected_phase
+            and type(final_revision) is int
+            and type(consumed_revision) is int
+            and final_revision == consumed_revision + 1
+        ):
+            passing_mobile_evidence.append(item)
+    passed_check_ids = {
+        check_id
+        for item in passing_mobile_evidence
+        for check_id in item.get("check_ids", [])
+    }
+    for check_id in sorted(required_check_ids - passed_check_ids):
+        diagnostics.append(
+            f"required mobile check lacks passing execution evidence: {check_id}"
+        )
 
     cleanup_actions = [
         item for item in actions

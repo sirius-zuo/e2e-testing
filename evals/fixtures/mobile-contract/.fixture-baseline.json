@@ -11,6 +11,6 @@
   "repositories/cross-platform/project.json": "59d66a2c3e0b0ca50267010e797a96597ae8edf4795df9b4d0895044716d15b3",
   "repositories/native-android/project.json": "6f214f432c637be62b1e3742eea57e2f0a94b52d173d5903ddbb2fb2177aa9c4",
   "repositories/native-ios/project.json": "3cc5b9c08410f7cb735d7ef62bdd7d42af30892cd9bfea20f6071b29c4a09881",
-  "test-support/mobile-driver.js": "b163b77907fc0ee93cd6100de42b69c5f68a909cacc9674258a0c2f218dd8942",
-  "tests/fixture-contract.test.js": "15b56bf25c7147c4e0444ce4bb1fa1718031b2e8c8f774dcb20ea2bc46e17e4a"
+  "test-support/mobile-driver.js": "4b8604c009ad78bd9f34c73b6e38667e817cce0d6788d54bc138f80d06ed6e82",
+  "tests/fixture-contract.test.js": "f07be2b7ef6546a1ce83aabfd09f3de1af53b2d33a9c8a71a247592b0e386f91"
 }

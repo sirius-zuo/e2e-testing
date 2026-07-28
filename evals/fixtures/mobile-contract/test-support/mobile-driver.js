@@ -32,6 +32,11 @@ if (
   process.exit(64);
 }
 
+const targetReference = platform === "ios"
+  ? `${driver}-ios-sim`
+  : `${driver}-android-emu`;
+const artifactReference = `artifact-candidate-${platform}`;
+
 const payload = {
   fixture: true,
   evidence_origin: "fixture",
@@ -40,8 +45,8 @@ const payload = {
   platform,
   os_version: "fixture-os",
   target_kind: platform === "ios" ? "simulator" : "emulator",
-  application_build_ref: scenario === "upgrade" ? "candidate-after-prior" : "candidate",
-  target_reference: `${driver}-${platform}-fixture`,
+  application_build_ref: artifactReference,
+  target_reference: targetReference,
   target_tier: "local",
   lifecycle: scenario === "upgrade"
     ? ["target", "prior-install", "prior-state", "candidate-upgrade", "launch", "cleanup"]

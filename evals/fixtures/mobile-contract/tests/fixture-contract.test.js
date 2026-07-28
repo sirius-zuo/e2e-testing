@@ -17,6 +17,14 @@ for (const driver of ["appium", "maestro"]) {
       const {result, payload} = run(driver, platform, "pass");
       assert.equal(result.status, 0);
       assert.equal(payload.evidence_origin, "fixture");
+      assert.equal(
+        payload.target_reference,
+        platform === "ios" ? `${driver}-ios-sim` : `${driver}-android-emu`,
+      );
+      assert.equal(
+        payload.application_build_ref,
+        `artifact-candidate-${platform}`,
+      );
       assert.deepEqual(
         payload.lifecycle,
         ["target", "install", "app-reset", "permissions", "launch", "cleanup"],

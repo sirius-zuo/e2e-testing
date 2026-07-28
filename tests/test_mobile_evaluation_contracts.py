@@ -242,6 +242,92 @@ class MobileEvaluatorGateTests(unittest.TestCase):
         )
         self.assertIn("fixture evidence cannot satisfy live mobile acceptance", diagnostics)
 
+    def test_unknown_mobile_evidence_origin_is_rejected(self):
+        environment = {**MOBILE_ENVIRONMENT, "evidence_origin": "shim"}
+        diagnostics = self._evaluate(
+            environment=environment,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": False},
+        )
+        self.assertIn(
+            "mobile execution evidence has invalid evidence origin: shim",
+            diagnostics,
+        )
+
+    def test_required_mobile_check_must_have_passing_execution_evidence(self):
+        def make_required_check_fail_with_decoy_pass(manifest):
+            manifest["checks"][0]["status"] = "failed"
+            manifest["checks"].append({
+                "id": "check-decoy",
+                "journey_id": "journey-mobile",
+                "execution_unit_id": "unit-mobile",
+                "status": "passed",
+            })
+            execution = manifest["evidence"][0]
+            execution["check_ids"] = ["check-decoy"]
+            execution["outcomes"] = [{
+                "check_id": "check-decoy",
+                "status": "passed",
+            }]
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_check_ids": ["check-mobile"],
+            },
+            mutate_manifest=make_required_check_fail_with_decoy_pass,
+        )
+        self.assertIn(
+            "required mobile check lacks passing execution evidence: check-mobile",
+            diagnostics,
+        )
+
+    def test_mobile_execution_target_must_match_bound_lifecycle(self):
+        environment = {**MOBILE_ENVIRONMENT, "target_reference": "target-other"}
+        diagnostics = self._evaluate(
+            environment=environment,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+        )
+        self.assertIn(
+            "mobile execution evidence references unknown target: target-other",
+            diagnostics,
+        )
+
+    def test_mobile_execution_artifact_must_match_bound_lifecycle(self):
+        environment = {
+            **MOBILE_ENVIRONMENT,
+            "application_build_ref": "artifact-other",
+        }
+        diagnostics = self._evaluate(
+            environment=environment,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+        )
+        self.assertIn(
+            "mobile execution evidence references unknown artifact: artifact-other",
+            diagnostics,
+        )
+
+    def test_mobile_execution_driver_and_platform_must_match_target(self):
+        environment = {
+            **MOBILE_ENVIRONMENT,
+            "driver": "maestro",
+            "platform": "android",
+        }
+        diagnostics = self._evaluate(
+            environment=environment,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+        )
+        self.assertIn(
+            "mobile execution evidence does not match target target-ios-sim",
+            diagnostics,
+        )
+
     def test_mobile_cleanup_failure_blocks_verified(self):
         diagnostics = self._evaluate(
             environment=MOBILE_ENVIRONMENT,
