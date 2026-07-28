@@ -7,6 +7,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import math
 import re
 import shlex
 import shutil
@@ -219,7 +220,15 @@ def _is_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool
     command = item.get("command")
     if not isinstance(command, str) or not command.strip():
         return False
-    if item.get("exit_code") != 0 or not isinstance(item.get("duration_ms"), (int, float)):
+    exit_code = item.get("exit_code")
+    duration = item.get("duration_ms")
+    if (
+        type(exit_code) is not int
+        or exit_code != 0
+        or isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or duration < 0
+    ):
         return False
     selected = item.get("check_ids")
     outcomes = item.get("outcomes")
@@ -277,10 +286,13 @@ def _classification(item: Any, primary: str) -> bool:
     if not isinstance(item, dict) or not isinstance(item.get("classification"), dict):
         return False
     classification = item["classification"]
+    confidence = classification.get("confidence")
     return (
         classification.get("primary") == primary
-        and isinstance(classification.get("confidence"), (int, float))
-        and classification["confidence"] >= 0.8
+        and not isinstance(confidence, bool)
+        and isinstance(confidence, (int, float))
+        and 0.8 <= confidence <= 1.0
+        and math.isfinite(confidence)
         and isinstance(classification.get("rationale"), str)
         and bool(classification["rationale"].strip())
         and isinstance(classification.get("evidence_ids"), list)
@@ -1535,11 +1547,6 @@ def _check_mobile_contract(
                     "requires a disposable virtual target"
                 )
 
-        lifecycle_by_unit = {
-            profile.get("execution_unit_id"): profile
-            for profile in lifecycle_profiles
-            if isinstance(profile.get("execution_unit_id"), str)
-        }
         units_by_id = {
             unit.get("id"): unit
             for unit in mobile_units
@@ -1592,7 +1599,13 @@ def _check_mobile_contract(
                 if isinstance(check, dict) and check.get("id") in item.get("check_ids", [])
             }
             for unit_id in selected_units:
-                profile = lifecycle_by_unit.get(unit_id)
+                matching_profiles = [
+                    profile
+                    for profile in lifecycle_profiles
+                    if profile.get("execution_unit_id") == unit_id
+                    and profile.get("target_id") == target_reference
+                    and artifact_reference in profile.get("artifact_ids", [])
+                ]
                 unit = units_by_id.get(unit_id)
                 system = (
                     systems_by_id.get(unit.get("system_id"))
@@ -1606,9 +1619,7 @@ def _check_mobile_contract(
                     else None
                 )
                 if (
-                    not isinstance(profile, dict)
-                    or profile.get("target_id") != target_reference
-                    or artifact_reference not in profile.get("artifact_ids", [])
+                    len(matching_profiles) != 1
                     or environment.get("target_tier") != target_tier
                 ):
                     diagnostics.append(

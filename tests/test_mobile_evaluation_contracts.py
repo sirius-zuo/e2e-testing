@@ -307,6 +307,52 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_required_mobile_execution_rejects_boolean_or_non_integer_exit_code(self):
+        for exit_code in (False, 0.0):
+            with self.subTest(exit_code=exit_code):
+                def make_invalid_exit_code(manifest, exit_code=exit_code):
+                    manifest["evidence"][0]["exit_code"] = exit_code
+
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect={
+                        "manifest_status": "verified",
+                        "allow_fixture_evidence": True,
+                        "required_check_ids": ["check-mobile"],
+                        "required_execution_evidence_ids": ["evidence-mobile"],
+                    },
+                    mutate_manifest=make_invalid_exit_code,
+                )
+                self.assertIn(
+                    "required mobile check lacks passing execution evidence: "
+                    "check-mobile",
+                    diagnostics,
+                )
+
+    def test_required_mobile_execution_rejects_boolean_or_negative_duration(self):
+        for duration in (True, -1):
+            with self.subTest(duration=duration):
+                def make_invalid_duration(manifest, duration=duration):
+                    manifest["evidence"][0]["duration_ms"] = duration
+
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect={
+                        "manifest_status": "verified",
+                        "allow_fixture_evidence": True,
+                        "required_check_ids": ["check-mobile"],
+                        "required_execution_evidence_ids": ["evidence-mobile"],
+                    },
+                    mutate_manifest=make_invalid_duration,
+                )
+                self.assertIn(
+                    "required mobile check lacks passing execution evidence: "
+                    "check-mobile",
+                    diagnostics,
+                )
+
     def test_mobile_execution_target_must_match_bound_lifecycle(self):
         environment = {**MOBILE_ENVIRONMENT, "target_reference": "target-other"}
         diagnostics = self._evaluate(
@@ -331,6 +377,76 @@ class MobileEvaluatorGateTests(unittest.TestCase):
         )
         self.assertIn(
             "mobile execution evidence references unknown artifact: artifact-other",
+            diagnostics,
+        )
+
+    def test_non_upgrade_execution_selects_unique_lifecycle_independent_of_order(self):
+        for insert_at_start in (False, True):
+            with self.subTest(insert_at_start=insert_at_start):
+                def add_distinct_same_unit_profile(
+                    manifest,
+                    insert_at_start=insert_at_start,
+                ):
+                    mobile = manifest["extensions"][0]["data"]
+                    mobile["targets"].append({
+                        **mobile["targets"][0],
+                        "id": "target-ios-other",
+                    })
+                    mobile["artifacts"].append({
+                        **mobile["artifacts"][0],
+                        "id": "artifact-candidate-other",
+                        "artifact_ref": "candidate-other",
+                        "build_ref": "candidate-other-1",
+                    })
+                    profile = {
+                        **mobile["lifecycle_profiles"][0],
+                        "id": "lifecycle-ios-other",
+                        "target_id": "target-ios-other",
+                        "artifact_ids": ["artifact-candidate-other"],
+                    }
+                    if insert_at_start:
+                        mobile["lifecycle_profiles"].insert(0, profile)
+                    else:
+                        mobile["lifecycle_profiles"].append(profile)
+
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect={
+                        "manifest_status": "verified",
+                        "allow_fixture_evidence": True,
+                        "required_check_ids": ["check-mobile"],
+                        "required_execution_evidence_ids": ["evidence-mobile"],
+                    },
+                    mutate_manifest=add_distinct_same_unit_profile,
+                )
+                self.assertNotIn(
+                    "mobile execution evidence is not bound to lifecycle for "
+                    "unit-mobile",
+                    diagnostics,
+                )
+
+    def test_non_upgrade_execution_rejects_ambiguous_same_unit_lifecycle(self):
+        def add_ambiguous_same_unit_profile(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["lifecycle_profiles"].append({
+                **mobile["lifecycle_profiles"][0],
+                "id": "lifecycle-ios-ambiguous",
+            })
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_check_ids": ["check-mobile"],
+                "required_execution_evidence_ids": ["evidence-mobile"],
+            },
+            mutate_manifest=add_ambiguous_same_unit_profile,
+        )
+        self.assertIn(
+            "mobile execution evidence is not bound to lifecycle for unit-mobile",
             diagnostics,
         )
 
@@ -391,6 +507,106 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             },
         )
         self.assertIn("mobile case forbids execution evidence", diagnostics)
+
+    def test_production_refusal_rejects_invalid_bound_classification_confidence(self):
+        for confidence in (True, float("inf"), 1.1):
+            with self.subTest(confidence=confidence):
+                def make_bound_production_refusal(
+                    manifest,
+                    confidence=confidence,
+                ):
+                    manifest["run"]["status"] = "needs-authorization"
+                    manifest["evidence"] = [{
+                        "id": "evidence-production-authorization",
+                        "surface": "mobile",
+                        "read_only": True,
+                    }, {
+                        "id": "evidence-production-classification",
+                        "classification": {
+                            "primary": "authorization-required",
+                            "confidence": confidence,
+                            "rationale": "production access is not authorized",
+                            "evidence_ids": [
+                                "evidence-production-authorization"
+                            ],
+                        },
+                    }]
+                    manifest["actions"] = [{
+                        "id": "action-production-authorization",
+                        "capability":
+                            "authorize-production-mobile-observation",
+                        "journey_ids": ["journey-mobile"],
+                        "evidence_ids": [
+                            "evidence-production-authorization"
+                        ],
+                    }]
+
+                expect = json.loads(
+                    (
+                        ROOT / "evals/cases/mobile-production-refusal.json"
+                    ).read_text()
+                )["expect"]
+                diagnostics = self._evaluate(
+                    environment={
+                        **MOBILE_ENVIRONMENT,
+                        "target_tier": "production",
+                    },
+                    cleanup_successful=True,
+                    expect=expect,
+                    mutate_manifest=make_bound_production_refusal,
+                )
+                self.assertIn(
+                    "missing evidence classification: "
+                    "authorization-required",
+                    diagnostics,
+                )
+
+    def test_cleanup_failure_rejects_invalid_bound_classification_confidence(self):
+        for confidence in (True, float("inf"), 1.1):
+            with self.subTest(confidence=confidence):
+                def make_bound_cleanup_failure(
+                    manifest,
+                    confidence=confidence,
+                ):
+                    manifest["run"]["status"] = "blocked"
+                    manifest["checks"][0]["id"] = "check-cleanup-passed"
+                    execution = manifest["evidence"][0]
+                    execution.update(
+                        check_ids=["check-cleanup-passed"],
+                        outcomes=[{
+                            "check_id": "check-cleanup-passed",
+                            "status": "passed",
+                        }],
+                    )
+                    manifest["evidence"] = [execution, {
+                        "id": "evidence-cleanup-failed",
+                        "cleanup_action_id": "action-mobile-cleanup",
+                        "cleanup_successful": False,
+                    }, {
+                        "id": "evidence-cleanup-classification",
+                        "classification": {
+                            "primary": "inconclusive",
+                            "confidence": confidence,
+                            "rationale": "cleanup could not be restored",
+                            "evidence_ids": ["evidence-cleanup-failed"],
+                        },
+                    }]
+
+                expect = json.loads(
+                    (
+                        ROOT / "evals/cases/mobile-cleanup-failure.json"
+                    ).read_text()
+                )["expect"]
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=False,
+                    expect=expect,
+                    mutate_manifest=make_bound_cleanup_failure,
+                )
+                self.assertIn(
+                    "missing evidence classification: inconclusive",
+                    diagnostics,
+                )
 
     def test_bootstrap_authorization_requires_two_distinct_capabilities(self):
         def make_unrelated_authorization(manifest):
