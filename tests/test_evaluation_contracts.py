@@ -545,6 +545,48 @@ class EvaluatorTests(unittest.TestCase):
             evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state),
         )
 
+    def test_failed_execution_evidence_rejects_invalid_duration(self):
+        for duration in (True, -1, "125", float("nan"), float("inf")):
+            with self.subTest(duration=duration):
+                evidence = _product_defect_evidence()[0]
+                evidence["duration_ms"] = duration
+                self.assertFalse(
+                    evaluate_result._is_failed_execution_evidence(
+                        evidence,
+                        {"check-checkout"},
+                        "web",
+                    )
+                )
+
+    def test_product_handoff_rejects_non_finite_failed_execution_duration(self):
+        for duration in (float("nan"), float("inf")):
+            with self.subTest(duration=duration):
+                workspace = Path(self.tmp.name) / f"non-finite-{duration}"
+                shutil.copytree(FIXTURES / "product-defect", workspace)
+                manifest = _manifest(workspace, status="handoff-required")
+                manifest["run"]["mode"] = "verify"
+                manifest["evidence"] = [
+                    *_product_defect_evidence(),
+                    _source_evidence(),
+                ]
+                manifest["evidence"][0]["duration_ms"] = duration
+                manifest["handoffs"] = [_product_defect_handoff()]
+                target = workspace / ".e2e"
+                state = Path(self.tmp.name) / f"non-finite-state-{duration}"
+                target.mkdir()
+                (target / "manifest.json").write_text(json.dumps(manifest))
+                self.assertIn(
+                    "handoff-required status requires failed selected-test "
+                    "execution and linked product-defect classification "
+                    "evidence",
+                    evaluate(
+                        CASES / "product-defect-handoff.json",
+                        workspace,
+                        "handoff",
+                        state,
+                    ),
+                )
+
     def test_product_handoff_requires_complete_defect_details_and_valid_refs(self):
         workspace = Path(self.tmp.name) / "incomplete-product-handoff"
         shutil.copytree(FIXTURES / "product-defect", workspace)

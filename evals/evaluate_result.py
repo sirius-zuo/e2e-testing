@@ -262,7 +262,10 @@ def _is_failed_execution_evidence(item: Any, check_ids: set[str], surface: str) 
     duration = item.get("duration_ms")
     if (
         isinstance(exit_code, bool) or not isinstance(exit_code, int) or exit_code == 0
-        or isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration < 0
+        or isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or (isinstance(duration, float) and not math.isfinite(duration))
+        or duration < 0
     ):
         return False
     selected = item.get("check_ids")
@@ -1128,6 +1131,11 @@ def _check_mobile_expected_state(
         if isinstance(item, str)
     }
     expected_check_ids = set(required_check_ids)
+    expected_phase = expect.get(
+        "_phase_name",
+        _run_value(manifest, "mode"),
+    )
+    final_revision = _run_value(manifest, "revision")
     if not expected_check_ids:
         expected_check_ids.update(
             check_id
@@ -1136,11 +1144,6 @@ def _check_mobile_expected_state(
             if check_id in checks_by_id
         )
     if not expected_check_ids:
-        expected_phase = expect.get(
-            "_phase_name",
-            _run_value(manifest, "mode"),
-        )
-        final_revision = _run_value(manifest, "revision")
         expected_check_ids.update(
             check_id
             for item in evidence_records
@@ -1194,6 +1197,14 @@ def _check_mobile_expected_state(
             item,
             set(checks_by_id),
             "mobile",
+        ):
+            continue
+        consumed_revision = item.get("manifest_revision_consumed")
+        if (
+            item.get("phase") != expected_phase
+            or type(final_revision) is not int
+            or type(consumed_revision) is not int
+            or final_revision != consumed_revision + 1
         ):
             continue
         selected_units = {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
@@ -95,6 +96,105 @@ def bind_bootstrap_authorized_manifest(manifest, authorization=None):
         if authorization is not None
         else []
     )
+
+
+def bind_complete_cleanup_failure(
+    manifest,
+    *,
+    cleanup_on_current,
+    stale_phase="repair",
+    stale_revision=7,
+):
+    manifest["run"]["status"] = "blocked"
+    manifest["checks"][0].update(
+        id="check-cleanup-passed",
+        status="passed",
+    )
+    current_execution = manifest["evidence"][0]
+    current_execution.update(
+        check_ids=["check-cleanup-passed"],
+        outcomes=[{
+            "check_id": "check-cleanup-passed",
+            "status": "passed",
+        }],
+    )
+    stale_execution = copy.deepcopy(current_execution)
+    stale_execution.update(
+        id="evidence-stale-decoy",
+        phase=stale_phase,
+        manifest_revision_consumed=stale_revision,
+        execution_environment={
+            **current_execution["execution_environment"],
+            "application_build_ref": "artifact-candidate-android",
+            "platform": "android",
+            "target_reference": "target-android-sim",
+        },
+    )
+    cleanup_action_id = (
+        "action-current-cleanup"
+        if cleanup_on_current
+        else "action-stale-cleanup"
+    )
+    manifest["evidence"] = [
+        current_execution,
+        stale_execution,
+        {
+            "id": "evidence-cleanup-failed",
+            "cleanup_action_id": cleanup_action_id,
+            "cleanup_successful": False,
+        },
+        {
+            "id": "evidence-cleanup-classification",
+            "classification": {
+                "primary": "inconclusive",
+                "confidence": 1.0,
+                "rationale": "cleanup could not be restored",
+                "evidence_ids": ["evidence-cleanup-failed"],
+            },
+        },
+    ]
+    manifest["actions"] = [{
+        "id": "action-current-cleanup",
+        "capability": (
+            "mobile-cleanup"
+            if cleanup_on_current
+            else "mobile-lifecycle-support"
+        ),
+        "journey_ids": ["journey-mobile"],
+    }, {
+        "id": "action-stale-cleanup",
+        "capability": (
+            "mobile-lifecycle-support"
+            if cleanup_on_current
+            else "mobile-cleanup"
+        ),
+        "journey_ids": ["journey-mobile"],
+    }]
+    mobile = manifest["extensions"][0]["data"]
+    mobile["targets"].append({
+        **copy.deepcopy(mobile["targets"][0]),
+        "id": "target-android-sim",
+        "platform": "android",
+        "device_ref": "fixture-android",
+        "evidence_refs": ["evidence-stale-decoy"],
+    })
+    mobile["artifacts"].append({
+        **copy.deepcopy(mobile["artifacts"][0]),
+        "id": "artifact-candidate-android",
+        "platform": "android",
+        "artifact_ref": "candidate-android",
+        "build_ref": "candidate-android",
+    })
+    mobile["lifecycle_profiles"][0]["cleanup_action_refs"] = [
+        "action-current-cleanup"
+    ]
+    mobile["lifecycle_profiles"].append({
+        **copy.deepcopy(mobile["lifecycle_profiles"][0]),
+        "id": "lifecycle-stale-decoy",
+        "target_id": "target-android-sim",
+        "artifact_ids": ["artifact-candidate-android"],
+        "cleanup_action_refs": ["action-stale-cleanup"],
+    })
 
 
 class MobileFixtureContractTests(unittest.TestCase):
@@ -577,6 +677,64 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             "mobile cleanup success lacks explicit evidence",
             diagnostics,
         )
+
+    def test_cleanup_failure_rejects_stale_decoy_lifecycle_action(self):
+        expect = json.loads(
+            (
+                ROOT / "evals/cases/mobile-cleanup-failure.json"
+            ).read_text()
+        )["expect"]
+        stale_bindings = (
+            ("repair", 0),
+            ("verify", 7),
+        )
+        for stale_phase, stale_revision in stale_bindings:
+            with self.subTest(
+                stale_phase=stale_phase,
+                stale_revision=stale_revision,
+            ):
+                def bind_stale_cleanup(
+                    manifest,
+                    stale_phase=stale_phase,
+                    stale_revision=stale_revision,
+                ):
+                    bind_complete_cleanup_failure(
+                        manifest,
+                        cleanup_on_current=False,
+                        stale_phase=stale_phase,
+                        stale_revision=stale_revision,
+                    )
+
+                diagnostics = self._evaluate(
+                    environment={
+                        **MOBILE_ENVIRONMENT,
+                        "evidence_origin": "platform",
+                    },
+                    cleanup_successful=False,
+                    expect=expect,
+                    mutate_manifest=bind_stale_cleanup,
+                )
+                self.assertIn(
+                    "mobile cleanup failure lacks explicit failed evidence",
+                    diagnostics,
+                )
+
+    def test_cleanup_failure_accepts_current_lifecycle_action(self):
+        expect = json.loads(
+            (
+                ROOT / "evals/cases/mobile-cleanup-failure.json"
+            ).read_text()
+        )["expect"]
+        diagnostics = self._evaluate(
+            environment={**MOBILE_ENVIRONMENT, "evidence_origin": "platform"},
+            cleanup_successful=False,
+            expect=expect,
+            mutate_manifest=lambda manifest: bind_complete_cleanup_failure(
+                manifest,
+                cleanup_on_current=True,
+            ),
+        )
+        self.assertEqual(diagnostics, [])
 
     def test_cleanup_failure_requires_failed_cleanup_and_inconclusive_classification(self):
         def make_label_only_cleanup_failure(manifest):
