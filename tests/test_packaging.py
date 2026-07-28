@@ -6,11 +6,17 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = [ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web", ROOT / "skills/e2e-service"]
+TARGETS = [
+    ROOT / "skills/e2e-testing",
+    ROOT / "skills/e2e-web",
+    ROOT / "skills/e2e-service",
+    ROOT / "skills/e2e-mobile",
+]
 EXPECTED_NAMESPACES = {
-    "e2e-testing": {"e2e.web", "e2e.service"},
+    "e2e-testing": {"e2e.web", "e2e.service", "e2e.mobile"},
     "e2e-web": {"e2e.web"},
     "e2e-service": {"e2e.service"},
+    "e2e-mobile": {"e2e.mobile"},
 }
 
 
@@ -49,6 +55,15 @@ class PackagingTests(unittest.TestCase):
                     "owner": "e2e-service", "data": {},
                 }]
                 self.assertIn("extension data missing required property: http", module.validate_manifest(manifest))
+            elif target.name == "e2e-mobile":
+                manifest["extensions"] = [{
+                    "id": "extension-mobile", "namespace": "e2e.mobile", "version": "1.0",
+                    "owner": "e2e-mobile", "data": {},
+                }]
+                self.assertIn(
+                    "extension data missing required property: application",
+                    module.validate_manifest(manifest),
+                )
             else:
                 manifest["extensions"] = [{
                     "id": "extension-web", "namespace": "e2e.web", "version": "1.0",

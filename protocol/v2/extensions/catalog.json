@@ -24,6 +24,18 @@
           "schema": "web.schema.json"
         }
       ]
+    },
+    {
+      "namespace": "e2e.mobile",
+      "owner": "e2e-mobile",
+      "versions": [
+        {
+          "minimum": "1.0",
+          "maximum": "1.0",
+          "dialect": "draft2020-12-subset-1",
+          "schema": "mobile.schema.json"
+        }
+      ]
     }
   ]
 }
