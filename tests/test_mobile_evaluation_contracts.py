@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -431,6 +432,239 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_cleanup_requirements_reject_unbound_action_and_self_referential_classification(self):
+        def make_unbound_cleanup_records(manifest):
+            manifest["run"]["status"] = "blocked"
+            manifest["evidence"] = [{
+                "id": "evidence-cleanup-failed",
+                "cleanup_action_id": "action-other",
+                "cleanup_successful": False,
+            }, {
+                "id": "evidence-classification",
+                "classification": {
+                    "primary": "inconclusive",
+                    "confidence": 1.0,
+                    "rationale": "cleanup could not be restored",
+                    "evidence_ids": ["evidence-classification"],
+                },
+            }]
+            manifest["actions"] = [{
+                "id": "action-mobile-cleanup",
+                "capability": "mobile-cleanup",
+                "journey_ids": ["journey-mobile"],
+                "evidence_ids": ["evidence-classification"],
+            }]
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=False,
+            expect={
+                "manifest_status": "blocked",
+                "required_evidence_ids": ["evidence-cleanup-failed"],
+                "required_action_capabilities": ["mobile-cleanup"],
+                "required_classifications": ["inconclusive"],
+                "required_cleanup_outcome": "failed",
+            },
+            mutate_manifest=make_unbound_cleanup_records,
+        )
+        self.assertIn("missing action capability: mobile-cleanup", diagnostics)
+        self.assertIn("missing evidence classification: inconclusive", diagnostics)
+
+    def test_authorization_requirements_reject_records_unbound_to_expected_evidence(self):
+        def make_unbound_authorization_records(manifest):
+            manifest["run"]["status"] = "needs-authorization"
+            manifest["evidence"] = [{
+                "id": "evidence-authorization-context",
+                "surface": "mobile",
+                "read_only": True,
+            }, {
+                "id": "evidence-unrelated",
+                "surface": "mobile",
+                "read_only": True,
+            }, {
+                "id": "evidence-authorization-classification",
+                "classification": {
+                    "primary": "authorization-required",
+                    "confidence": 1.0,
+                    "rationale": "some authorization is required",
+                    "evidence_ids": ["evidence-unrelated"],
+                },
+            }]
+            manifest["actions"] = [{
+                "id": "action-authorization",
+                "capability": "provide-mobile-credentials",
+                "journey_ids": ["journey-mobile"],
+                "evidence_ids": ["evidence-unrelated"],
+            }]
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "needs-authorization",
+                "required_evidence_ids": ["evidence-authorization-context"],
+                "required_action_capabilities": ["provide-mobile-credentials"],
+                "required_classifications": ["authorization-required"],
+                "forbid_execution": True,
+            },
+            mutate_manifest=make_unbound_authorization_records,
+        )
+        self.assertIn("missing action capability: provide-mobile-credentials", diagnostics)
+        self.assertIn(
+            "missing evidence classification: authorization-required",
+            diagnostics,
+        )
+
+    def test_forbid_execution_rejects_command_evidence_without_selected_checks(self):
+        for check_ids in (None, []):
+            with self.subTest(check_ids=check_ids):
+                def make_forbidden_attempt(manifest, check_ids=check_ids):
+                    manifest["run"]["status"] = "generated-unverified"
+                    attempt = {
+                        "id": "evidence-driver-attempt",
+                        "command": "appium driver install xcuitest",
+                        "exit_code": 1,
+                        "duration_ms": 5,
+                        "execution_environment": {
+                            "driver": "appium",
+                        },
+                    }
+                    if check_ids is not None:
+                        attempt["check_ids"] = check_ids
+                    manifest["evidence"] = [attempt]
+                    manifest["actions"] = []
+
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect={
+                        "manifest_status": "generated-unverified",
+                        "forbid_execution": True,
+                    },
+                    mutate_manifest=make_forbidden_attempt,
+                )
+                self.assertIn("mobile case forbids execution evidence", diagnostics)
+
+    def test_forbid_execution_does_not_reject_pure_operation_labels(self):
+        def make_label_only_records(manifest):
+            manifest["run"]["status"] = "generated-unverified"
+            manifest["evidence"] = [{
+                "id": "evidence-plan",
+                "kind": "plan",
+                "operations": ["build", "install", "launch", "driver"],
+            }]
+            manifest["actions"] = []
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "generated-unverified",
+                "forbid_execution": True,
+            },
+            mutate_manifest=make_label_only_records,
+        )
+        self.assertNotIn("mobile case forbids execution evidence", diagnostics)
+
+    def test_upgrade_expectations_bind_to_selected_upgrade_lifecycle_and_evidence(self):
+        required_sequence = [
+            "target",
+            "prior-install",
+            "prior-state",
+            "candidate-upgrade",
+            "launch",
+            "cleanup",
+        ]
+
+        def add_unbound_upgrade_records(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["artifacts"].append({
+                **mobile["artifacts"][0],
+                "id": "artifact-prior-unused",
+                "role": "prior",
+                "artifact_ref": "prior-unused",
+                "build_ref": "prior-unused-1",
+            })
+            manifest["evidence"].append({
+                "id": "evidence-unrelated-upgrade",
+                "lifecycle": required_sequence,
+            })
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_execution_evidence_ids": ["evidence-mobile"],
+                "required_artifact_roles": ["prior", "candidate"],
+                "required_lifecycle_sequence": required_sequence,
+            },
+            mutate_manifest=add_unbound_upgrade_records,
+        )
+        self.assertIn("mobile required lifecycle is not an upgrade", diagnostics)
+        self.assertIn("missing mobile artifact role: prior", diagnostics)
+        self.assertIn(
+            "mobile lifecycle evidence is missing the required sequence",
+            diagnostics,
+        )
+
+    def test_required_bootstrap_is_checked_on_selected_target_driver(self):
+        def authorize_unused_driver(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["drivers"].append({
+                **mobile["drivers"][0],
+                "id": "driver-appium-unused",
+                "bootstrap_status": "authorized",
+                "authorization_ref": "authorization-mobile-bootstrap",
+            })
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_driver_bootstrap": {
+                    "kind": "appium",
+                    "status": "authorized",
+                    "authorization_ref": "authorization-mobile-bootstrap",
+                },
+            },
+            mutate_manifest=authorize_unused_driver,
+        )
+        self.assertIn(
+            "mobile driver lacks required bootstrap authorization",
+            diagnostics,
+        )
+
+    def test_capability_unavailable_evidence_must_match_bound_target_and_driver(self):
+        def make_arbitrary_capability_evidence(manifest):
+            manifest["run"]["status"] = "capability-unavailable"
+            manifest["evidence"] = [{
+                "id": "evidence-capability",
+                "surface": "mobile",
+                "adapter": "arbitrary-adapter",
+                "target_reference": "arbitrary-target",
+                "source_locations": ["package.json"],
+                "read_only": True,
+            }]
+            manifest["actions"] = []
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "capability-unavailable",
+                "required_capability_target_evidence": True,
+            },
+            mutate_manifest=make_arbitrary_capability_evidence,
+        )
+        self.assertIn(
+            "missing capability-unavailable mobile adapter and target evidence",
+            diagnostics,
+        )
+
     def test_production_external_effect_is_rejected(self):
         environment = {
             **MOBILE_ENVIRONMENT,
@@ -705,6 +939,7 @@ class MobileCaseContractTests(unittest.TestCase):
                 "required_cleanup_outcome": "successful",
             },
             "mobile-production-refusal": {
+                "required_evidence_ids": ["evidence-production-authorization"],
                 "required_action_capabilities": [
                     "authorize-production-mobile-observation",
                 ],
@@ -720,6 +955,7 @@ class MobileCaseContractTests(unittest.TestCase):
                 "required_cleanup_outcome": "failed",
             },
             "mobile-bootstrap-authorization": {
+                "required_evidence_ids": ["evidence-bootstrap-authorization"],
                 "required_action_capabilities": [
                     "mobile-repository-bootstrap",
                     "mobile-host-prerequisite",
@@ -742,6 +978,7 @@ class MobileCaseContractTests(unittest.TestCase):
                 "forbid_execution": True,
             },
             "mobile-missing-credentials": {
+                "required_evidence_ids": ["evidence-missing-credentials"],
                 "required_action_capabilities": ["provide-mobile-credentials"],
                 "required_classifications": ["authorization-required"],
                 "require_empty_credential_refs": True,
@@ -773,6 +1010,61 @@ class MobileCaseContractTests(unittest.TestCase):
             )
 
         self.assertIn("unauthorized mobile case change: mobile/app.json", diagnostics)
+
+    def test_allowed_mobile_changes_enforce_created_skill_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            shutil.copytree(FIXTURE, workspace)
+            skill = workspace / ".agents/skills/rogue/SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("rogue", encoding="utf-8")
+
+            diagnostics = _check_files(
+                workspace,
+                FIXTURE,
+                {"allowed_change_globs": ["**/appium/**", "**/appium*.js"]},
+            )
+
+        self.assertIn(
+            "unauthorized mobile case change: .agents/skills/rogue/SKILL.md",
+            diagnostics,
+        )
+
+    def test_allowed_mobile_changes_enforce_changed_and_deleted_skill_files(self):
+        for directory in (".agents/skills", ".claude/skills"):
+            for operation in ("changed", "deleted"):
+                with self.subTest(directory=directory, operation=operation):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        fixture = Path(tmp) / "fixture"
+                        shutil.copytree(FIXTURE, fixture)
+                        baseline_skill = fixture / directory / "mobile/SKILL.md"
+                        baseline_skill.parent.mkdir(parents=True)
+                        baseline_skill.write_text("baseline", encoding="utf-8")
+                        baseline_path = fixture / ".fixture-baseline.json"
+                        baseline = json.loads(baseline_path.read_text())
+                        baseline[f"{directory}/mobile/SKILL.md"] = hashlib.sha256(
+                            b"baseline"
+                        ).hexdigest()
+                        baseline_path.write_text(json.dumps(baseline))
+                        workspace = Path(tmp) / "workspace"
+                        shutil.copytree(fixture, workspace)
+                        workspace_skill = workspace / directory / "mobile/SKILL.md"
+                        if operation == "changed":
+                            workspace_skill.write_text("changed", encoding="utf-8")
+                        else:
+                            workspace_skill.unlink()
+
+                        diagnostics = _check_files(
+                            workspace,
+                            fixture,
+                            {"allowed_change_globs": ["**/appium/**"]},
+                        )
+
+                    self.assertIn(
+                        f"unauthorized mobile case change: "
+                        f"{directory}/mobile/SKILL.md",
+                        diagnostics,
+                    )
 
 
 if __name__ == "__main__":
