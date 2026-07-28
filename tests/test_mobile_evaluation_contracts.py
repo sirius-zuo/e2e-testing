@@ -1744,6 +1744,38 @@ class MobileCaseContractTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_external_baseline_version_requires_a_json_integer(self):
+        for version in (True, 1.0):
+            with self.subTest(version=version):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    workspace = root / "workspace"
+                    shutil.copytree(FIXTURE, workspace)
+                    state = root / "state"
+                    run_host_eval._snapshot_workspace_baseline(workspace, state)
+                    baseline_path = state / "workspace-baseline.json"
+                    envelope = json.loads(
+                        baseline_path.read_text(encoding="utf-8")
+                    )
+                    envelope["version"] = version
+                    baseline_path.write_text(
+                        json.dumps(envelope),
+                        encoding="utf-8",
+                    )
+
+                    diagnostics = _check_files(
+                        workspace,
+                        FIXTURE,
+                        {"allowed_change_globs": []},
+                        state,
+                    )
+
+                self.assertIn(
+                    "invalid workspace baseline: "
+                    "expected SHA-256 hash map envelope",
+                    diagnostics,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -711,7 +711,8 @@ def _check_files(
                     "files_digest",
                     "files",
                 }
-                or snapshot.get("version") != 1
+                or type(snapshot.get("version")) is not int
+                or snapshot["version"] != 1
                 or not isinstance(snapshot.get("files"), dict)
                 or not all(
                     isinstance(relative, str)
