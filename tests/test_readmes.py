@@ -109,6 +109,26 @@ class ReadmeContractTests(unittest.TestCase):
         ):
             self.assertIn(required, text)
 
+    def test_host_evaluation_guide_preserves_existing_procedure_and_adds_mobile(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        for required in (
+            "Authorized host evaluation",
+            "explicitly approved that individual evaluation session",
+            "disposable fixture workspace",
+            "review the retained transcript for secret leakage",
+            "--host-timeout",
+            "The source repository is never the host working directory",
+            "greenfield-source",
+            "service-multi-protocol",
+            "mobile-generate-appium",
+            "mobile-generate-maestro",
+            "mobile-verify-lifecycle",
+            "mobile-production-refusal",
+            "Without `--keep-results`",
+        ):
+            self.assertIn(required, text)
+        self.assertEqual(text.count("### Mobile cases"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
