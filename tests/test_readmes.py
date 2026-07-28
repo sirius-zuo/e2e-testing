@@ -154,29 +154,43 @@ class ReadmeContractTests(unittest.TestCase):
                 flags=re.MULTILINE | re.DOTALL,
             )
             self.assertEqual(len(mobile_sections), 1, host_name)
-            fenced_blocks = re.findall(
-                r"^```(?P<language>[^\n]*)\n(?P<commands>.*?)^```[ \t]*$",
-                mobile_sections[0],
-                flags=re.MULTILINE | re.DOTALL,
-            )
+            fenced_blocks = []
+            open_fence = None
+            fenced_lines = []
+            all_host_eval_lines = []
+            outside_host_eval_lines = []
+            for line in mobile_sections[0].splitlines():
+                if line.strip().startswith("```"):
+                    if open_fence is None:
+                        open_fence = line
+                        fenced_lines = []
+                    else:
+                        self.assertEqual(line, "```", host_name)
+                        fenced_blocks.append((open_fence, fenced_lines))
+                        open_fence = None
+                        fenced_lines = []
+                    continue
+
+                occurrence_count = line.count("run_host_eval.py")
+                if occurrence_count:
+                    all_host_eval_lines.extend([line] * occurrence_count)
+                    if open_fence is None:
+                        outside_host_eval_lines.extend([line] * occurrence_count)
+                if open_fence is not None:
+                    fenced_lines.append(line)
+
+            self.assertIsNone(open_fence, host_name)
             self.assertEqual(len(fenced_blocks), 1, host_name)
-            language, commands = fenced_blocks[0]
-            self.assertEqual(language, "sh", host_name)
+            opener, commands = fenced_blocks[0]
+            self.assertEqual(opener, "```sh", host_name)
 
             expected_commands = [
                 f"python3 evals/run_host_eval.py --host {host_flag} --case {case}"
                 for case in expected_cases
             ]
-            self.assertEqual(commands.splitlines(), expected_commands)
-            all_host_eval_commands = re.findall(
-                r"^[ \t]*python3[ \t]+evals/run_host_eval\.py\b[^\n]*",
-                mobile_sections[0],
-                flags=re.MULTILINE,
-            )
-            self.assertEqual(
-                [command.strip() for command in all_host_eval_commands],
-                expected_commands,
-            )
+            self.assertEqual(commands, expected_commands)
+            self.assertEqual(outside_host_eval_lines, [], host_name)
+            self.assertEqual(all_host_eval_lines, expected_commands)
 
     def test_host_evaluation_guide_lists_exact_host_specific_mobile_commands(self):
         text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
@@ -209,6 +223,39 @@ class ReadmeContractTests(unittest.TestCase):
             "python3 evals/run_host_eval.py --host codex --case mobile-extra"
         )
         mutated = text.replace(final_codex_command, extra_command, 1)
+        self.assertNotEqual(mutated, text)
+
+        with self.assertRaises(AssertionError):
+            self._assert_exact_host_mobile_commands(mutated)
+
+    def test_host_evaluation_guide_rejects_an_unclosed_mobile_fence(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        final_codex_command = (
+            "python3 evals/run_host_eval.py --host codex "
+            "--case mobile-production-refusal\n```"
+        )
+        mutated = text.replace(
+            final_codex_command,
+            f"{final_codex_command}\n\n```sh",
+            1,
+        )
+        self.assertNotEqual(mutated, text)
+
+        with self.assertRaises(AssertionError):
+            self._assert_exact_host_mobile_commands(mutated)
+
+    def test_host_evaluation_guide_rejects_a_prefixed_extra_mobile_command(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        final_codex_command = (
+            "python3 evals/run_host_eval.py --host codex "
+            "--case mobile-production-refusal\n```"
+        )
+        prefixed_command = (
+            f"{final_codex_command}\n"
+            "env X=1 python3 evals/run_host_eval.py "
+            "--host codex --case mobile-extra"
+        )
+        mutated = text.replace(final_codex_command, prefixed_command, 1)
         self.assertNotEqual(mutated, text)
 
         with self.assertRaises(AssertionError):
