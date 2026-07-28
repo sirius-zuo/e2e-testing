@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,7 @@ SKILL_NAMES = ("e2e-testing", "e2e-web", "e2e-service", "e2e-mobile")
 CASE_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 DEFAULT_HOST_TIMEOUT = 300.0
 TERMINATE_TIMEOUT = 2.0
+WORKSPACE_BASELINE = "workspace-baseline.json"
 
 
 class HostUnavailableError(RuntimeError):
@@ -155,6 +157,21 @@ def _install_skills(workspace: Path, host: str) -> None:
         if not (source / "SKILL.md").is_file():
             raise RuntimeError(f"missing portable skill: {skill_name}")
         shutil.copytree(source, destination_root / skill_name)
+
+
+def _snapshot_workspace_baseline(workspace: Path, state_dir: Path) -> None:
+    baseline = {
+        path.relative_to(workspace).as_posix(): hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
+        for path in sorted(workspace.rglob("*"))
+        if path.is_file()
+    }
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / WORKSPACE_BASELINE).write_text(
+        json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _phase_runs(case: dict[str, Any]) -> list[tuple[str | None, str, Path | None]]:
@@ -325,6 +342,7 @@ def run_case(host: str, case_id: str, *, keep_results: bool = False, host_timeou
     with _workspace(case) as (artifact_dir, workspace, state_dir):
         try:
             _install_skills(workspace, host)
+            _snapshot_workspace_baseline(workspace, state_dir)
             with running_setup(case, workspace):
                 for index, (phase, prompt, patch) in enumerate(_phase_runs(case)):
                     if index and patch:

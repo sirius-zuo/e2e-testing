@@ -470,6 +470,32 @@ class MobileEvaluatorGateTests(unittest.TestCase):
         self.assertIn("missing action capability: mobile-cleanup", diagnostics)
         self.assertIn("missing evidence classification: inconclusive", diagnostics)
 
+    def test_cleanup_action_must_cover_each_required_check_journey(self):
+        for journey_ids in ([], ["journey-unrelated"]):
+            with self.subTest(journey_ids=journey_ids):
+                def scope_cleanup_to_wrong_journey(manifest, journey_ids=journey_ids):
+                    manifest["journeys"].append({
+                        "id": "journey-unrelated",
+                        "system_id": "system-primary",
+                        "status": "verified",
+                    })
+                    manifest["actions"][0]["journey_ids"] = journey_ids
+
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect={
+                        "manifest_status": "verified",
+                        "allow_fixture_evidence": True,
+                        "required_check_ids": ["check-mobile"],
+                        "required_evidence_ids": ["evidence-cleanup"],
+                        "required_action_capabilities": ["mobile-cleanup"],
+                        "required_cleanup_outcome": "successful",
+                    },
+                    mutate_manifest=scope_cleanup_to_wrong_journey,
+                )
+                self.assertIn("missing action capability: mobile-cleanup", diagnostics)
+
     def test_authorization_requirements_reject_records_unbound_to_expected_evidence(self):
         def make_unbound_authorization_records(manifest):
             manifest["run"]["status"] = "needs-authorization"
@@ -609,6 +635,74 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_upgrade_expectations_ignore_extra_checks_on_an_unrelated_upgrade_unit(self):
+        required_sequence = [
+            "target",
+            "prior-install",
+            "prior-state",
+            "candidate-upgrade",
+            "launch",
+            "cleanup",
+        ]
+
+        def add_extra_upgrade_unit(manifest):
+            manifest["execution_units"].append({
+                **manifest["execution_units"][0],
+                "id": "unit-extra",
+            })
+            manifest["checks"].append({
+                "id": "check-extra",
+                "journey_id": "journey-mobile",
+                "execution_unit_id": "unit-extra",
+                "status": "passed",
+            })
+            execution = manifest["evidence"][0]
+            execution["check_ids"].append("check-extra")
+            execution["outcomes"].append({
+                "check_id": "check-extra",
+                "status": "passed",
+            })
+            execution["lifecycle"] = required_sequence
+            mobile = manifest["extensions"][0]["data"]
+            mobile["artifacts"].append({
+                **mobile["artifacts"][0],
+                "id": "artifact-prior-extra",
+                "role": "prior",
+                "artifact_ref": "prior-extra",
+                "build_ref": "prior-extra-1",
+            })
+            mobile["lifecycle_profiles"].append({
+                **mobile["lifecycle_profiles"][0],
+                "id": "lifecycle-extra",
+                "execution_unit_id": "unit-extra",
+                "artifact_ids": [
+                    "artifact-prior-extra",
+                    "artifact-candidate-ios",
+                ],
+                "install_policy": "upgrade",
+                "upgrade": True,
+            })
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_check_ids": ["check-mobile"],
+                "required_execution_evidence_ids": ["evidence-mobile"],
+                "required_artifact_roles": ["prior", "candidate"],
+                "required_lifecycle_sequence": required_sequence,
+            },
+            mutate_manifest=add_extra_upgrade_unit,
+        )
+        self.assertIn("mobile required lifecycle is not an upgrade", diagnostics)
+        self.assertIn("missing mobile artifact role: prior", diagnostics)
+        self.assertIn(
+            "mobile lifecycle evidence is missing the required sequence",
+            diagnostics,
+        )
+
     def test_required_bootstrap_is_checked_on_selected_target_driver(self):
         def authorize_unused_driver(manifest):
             mobile = manifest["extensions"][0]["data"]
@@ -638,6 +732,51 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_required_bootstrap_ignores_another_bound_mobile_unit(self):
+        def authorize_another_bound_unit(manifest):
+            manifest["execution_units"].append({
+                **manifest["execution_units"][0],
+                "id": "unit-extra",
+            })
+            mobile = manifest["extensions"][0]["data"]
+            mobile["drivers"].append({
+                **mobile["drivers"][0],
+                "id": "driver-appium-extra",
+                "bootstrap_status": "authorized",
+                "authorization_ref": "authorization-mobile-bootstrap",
+            })
+            mobile["targets"].append({
+                **mobile["targets"][0],
+                "id": "target-extra",
+                "driver_id": "driver-appium-extra",
+            })
+            mobile["lifecycle_profiles"].append({
+                **mobile["lifecycle_profiles"][0],
+                "id": "lifecycle-extra",
+                "execution_unit_id": "unit-extra",
+                "target_id": "target-extra",
+            })
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_check_ids": ["check-mobile"],
+                "required_driver_bootstrap": {
+                    "kind": "appium",
+                    "status": "authorized",
+                    "authorization_ref": "authorization-mobile-bootstrap",
+                },
+            },
+            mutate_manifest=authorize_another_bound_unit,
+        )
+        self.assertIn(
+            "mobile driver lacks required bootstrap authorization",
+            diagnostics,
+        )
+
     def test_capability_unavailable_evidence_must_match_bound_target_and_driver(self):
         def make_arbitrary_capability_evidence(manifest):
             manifest["run"]["status"] = "capability-unavailable"
@@ -659,6 +798,55 @@ class MobileEvaluatorGateTests(unittest.TestCase):
                 "required_capability_target_evidence": True,
             },
             mutate_manifest=make_arbitrary_capability_evidence,
+        )
+        self.assertIn(
+            "missing capability-unavailable mobile adapter and target evidence",
+            diagnostics,
+        )
+
+    def test_capability_evidence_ignores_another_bound_mobile_unit(self):
+        def bind_capability_to_another_unit(manifest):
+            manifest["run"]["status"] = "capability-unavailable"
+            manifest["execution_units"].append({
+                **manifest["execution_units"][0],
+                "id": "unit-extra",
+            })
+            mobile = manifest["extensions"][0]["data"]
+            mobile["drivers"].append({
+                **mobile["drivers"][0],
+                "id": "driver-maestro-extra",
+                "kind": "maestro",
+            })
+            mobile["targets"].append({
+                **mobile["targets"][0],
+                "id": "target-extra",
+                "driver_id": "driver-maestro-extra",
+            })
+            mobile["lifecycle_profiles"].append({
+                **mobile["lifecycle_profiles"][0],
+                "id": "lifecycle-extra",
+                "execution_unit_id": "unit-extra",
+                "target_id": "target-extra",
+            })
+            manifest["evidence"] = [{
+                "id": "evidence-capability",
+                "surface": "mobile",
+                "adapter": "maestro",
+                "target_reference": "target-extra",
+                "source_locations": ["package.json"],
+                "read_only": True,
+            }]
+            manifest["actions"] = []
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "capability-unavailable",
+                "required_check_ids": ["check-mobile"],
+                "required_capability_target_evidence": True,
+            },
+            mutate_manifest=bind_capability_to_another_unit,
         )
         self.assertIn(
             "missing capability-unavailable mobile adapter and target evidence",
@@ -1063,6 +1251,55 @@ class MobileCaseContractTests(unittest.TestCase):
                     self.assertIn(
                         f"unauthorized mobile case change: "
                         f"{directory}/mobile/SKILL.md",
+                        diagnostics,
+                    )
+
+    def test_allowed_patterns_never_override_installed_skill_tree_protection(self):
+        protected_cases = (
+            (
+                ".agents/skills/rogue/appium/config.js",
+                "**/appium/**",
+            ),
+            (
+                ".claude/skills/rogue/.maestro/login.yaml",
+                "**/.maestro/**",
+            ),
+        )
+        for relative, allowed_pattern in protected_cases:
+            for operation in ("created", "changed", "deleted"):
+                with self.subTest(relative=relative, operation=operation):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        fixture = Path(tmp) / "fixture"
+                        shutil.copytree(FIXTURE, fixture)
+                        baseline_path = fixture / ".fixture-baseline.json"
+                        baseline = json.loads(baseline_path.read_text())
+                        if operation != "created":
+                            source = fixture / relative
+                            source.parent.mkdir(parents=True)
+                            source.write_text("baseline", encoding="utf-8")
+                            baseline[relative] = hashlib.sha256(
+                                b"baseline"
+                            ).hexdigest()
+                            baseline_path.write_text(json.dumps(baseline))
+                        workspace = Path(tmp) / "workspace"
+                        shutil.copytree(fixture, workspace)
+                        target = workspace / relative
+                        if operation == "created":
+                            target.parent.mkdir(parents=True)
+                            target.write_text("created", encoding="utf-8")
+                        elif operation == "changed":
+                            target.write_text("changed", encoding="utf-8")
+                        else:
+                            target.unlink()
+
+                        diagnostics = _check_files(
+                            workspace,
+                            fixture,
+                            {"allowed_change_globs": [allowed_pattern]},
+                        )
+
+                    self.assertIn(
+                        f"unauthorized mobile case change: {relative}",
                         diagnostics,
                     )
 

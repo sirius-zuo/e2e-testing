@@ -868,6 +868,48 @@ class HostHarnessTests(unittest.TestCase):
                     self.assertTrue((workspace / skill_root / skill / "SKILL.md").is_file())
                 self.assertFalse((workspace / skill_root / "e2e-web-playwright").exists())
 
+    def test_snapshots_harness_installed_skills_deterministically_before_host_evaluation(self):
+        snapshots: list[str] = []
+
+        def evaluator(_case_path, workspace, _phase, state_dir):
+            snapshot = Path(state_dir) / "workspace-baseline.json"
+            self.assertTrue(snapshot.is_file())
+            text = snapshot.read_text(encoding="utf-8")
+            baseline = json.loads(text)
+            self.assertTrue(baseline)
+            self.assertIn(".git/HEAD", baseline)
+            self.assertIn("package.json", baseline)
+            self.assertIn(".agents/skills/e2e-mobile/SKILL.md", baseline)
+            self.assertEqual(
+                baseline[".agents/skills/e2e-mobile/SKILL.md"],
+                _sha256(Path(workspace) / ".agents/skills/e2e-mobile/SKILL.md"),
+            )
+            diagnostics = evaluate_result._check_files(
+                Path(workspace),
+                FIXTURES / "greenfield-source",
+                {"allowed_change_globs": []},
+                Path(state_dir),
+            )
+            self.assertFalse(
+                any(".agents/skills/" in item for item in diagnostics),
+                diagnostics,
+            )
+            snapshots.append(text)
+            return []
+
+        process = mock.Mock(pid=4321, returncode=0)
+        process.communicate.return_value = ("", "")
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
+            mock.patch("evals.run_host_eval.evaluate", side_effect=evaluator),
+        ):
+            self.assertEqual(run_host_eval.run_case("codex", "greenfield-source"), 0)
+            self.assertEqual(run_host_eval.run_case("codex", "greenfield-source"), 0)
+
+        self.assertEqual(len(snapshots), 2)
+        self.assertEqual(snapshots[0], snapshots[1])
+
     def test_each_run_uses_a_fresh_fixture_copy_and_never_the_source_fixture(self):
         _, first, _, _ = self._run(keep_results=True)
         _, second, _, _ = self._run(keep_results=True)

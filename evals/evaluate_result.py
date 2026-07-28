@@ -23,6 +23,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_PROTOCOL = ROOT / "skills" / "e2e-testing" / "scripts" / "e2e_protocol.py"
 CHECKPOINT_RUN_ID = re.compile(r"run-[a-z0-9-]+$")
+WORKSPACE_BASELINE = "workspace-baseline.json"
+PROTECTED_SKILL_ROOTS = (".agents/skills/", ".claude/skills/")
 
 
 def _load_protocol():
@@ -332,6 +334,18 @@ def _check_expected_action_capabilities(
         for item in expect.get("required_journey_ids", [])
         if isinstance(item, str)
     }
+    required_check_ids = {
+        item
+        for item in expect.get("required_check_ids", [])
+        if isinstance(item, str)
+    }
+    required_journey_ids.update(
+        item.get("journey_id")
+        for item in manifest.get("checks", [])
+        if isinstance(item, dict)
+        and item.get("id") in required_check_ids
+        and isinstance(item.get("journey_id"), str)
+    )
 
     def has_bound_action(capability: str) -> bool:
         for action in records:
@@ -629,7 +643,12 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any], sur
     return diagnostics
 
 
-def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list[str]:
+def _check_files(
+    workspace: Path,
+    fixture: Path,
+    expect: dict[str, Any],
+    state_dir: Path | None = None,
+) -> list[str]:
     diagnostics: list[str] = []
     baseline, baseline_errors = _read_json(fixture / ".fixture-baseline.json", "fixture baseline")
     if baseline_errors:
@@ -666,21 +685,36 @@ def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list
             diagnostics.append(f"required change missing: {pattern}")
     allowed_change_globs = expect.get("allowed_change_globs")
     if isinstance(allowed_change_globs, list):
-        baseline_names = set(baseline)
+        installed_baseline: dict[str, Any] = {}
+        if state_dir is not None:
+            snapshot, snapshot_errors = _read_json(
+                state_dir / WORKSPACE_BASELINE,
+                "workspace baseline",
+            )
+            if not snapshot_errors:
+                assert snapshot is not None
+                installed_baseline = snapshot
+        initial_baseline = dict(baseline)
+        initial_baseline.update(installed_baseline)
+        baseline_names = set(initial_baseline)
         current_names = {relative for relative, _ in files}
         changed_or_created = {
             relative
             for relative, path in files
             if (
                 relative not in baseline_names
-                or _sha256(path) != baseline[relative]
+                or _sha256(path) != initial_baseline[relative]
             )
             and not relative.startswith(".e2e/")
             and relative != ".fixture-baseline.json"
         }
         changed_or_created.update(baseline_names - current_names)
         for relative in sorted(changed_or_created):
-            if not any(_matches(relative, pattern) for pattern in allowed_change_globs):
+            protected = relative.startswith(PROTECTED_SKILL_ROOTS)
+            if protected or not any(
+                _matches(relative, pattern)
+                for pattern in allowed_change_globs
+            ):
                 diagnostics.append(f"unauthorized mobile case change: {relative}")
     for relative, expected_hash in expect.get("expected_file_hashes", {}).items():
         actual = workspace / relative
@@ -1021,12 +1055,32 @@ def _check_mobile_expected_state(
         for item in required_execution_ids
         if item in evidence_by_id
     ]
+    required_check_ids = {
+        item
+        for item in expect.get("required_check_ids", [])
+        if isinstance(item, str)
+    }
+    expected_check_ids = set(required_check_ids)
+    if not expected_check_ids:
+        expected_check_ids.update(
+            check_id
+            for item in expected_evidence
+            for check_id in item.get("check_ids", [])
+            if check_id in checks_by_id
+        )
+    if not expected_check_ids:
+        expected_check_ids.update(
+            check_id
+            for check_id, check in checks_by_id.items()
+            if check.get("execution_unit_id") in mobile_unit_ids
+        )
     expected_unit_ids = {
         checks_by_id[check_id].get("execution_unit_id")
-        for item in expected_evidence
-        for check_id in item.get("check_ids", [])
+        for check_id in expected_check_ids
         if check_id in checks_by_id
     }
+    if not expected_unit_ids:
+        expected_unit_ids = set(mobile_unit_ids)
     bound_profiles = [
         profile
         for profile in lifecycle_profiles
@@ -1035,16 +1089,13 @@ def _check_mobile_expected_state(
     expected_profiles = [
         profile
         for profile in bound_profiles
-        if (
-            not expected_unit_ids
-            or profile.get("execution_unit_id") in expected_unit_ids
-        )
+        if profile.get("execution_unit_id") in expected_unit_ids
     ]
 
     selected_target_drivers: list[
         tuple[str, dict[str, Any], dict[str, Any]]
     ] = []
-    for profile in bound_profiles:
+    for profile in expected_profiles:
         target_id = profile.get("target_id")
         target = targets.get(target_id)
         driver = (
@@ -1136,7 +1187,11 @@ def _check_mobile_expected_state(
             for profile in upgrade_profiles
         }
         lifecycle_evidence = (
-            expected_evidence
+            [
+                item
+                for item in expected_evidence
+                if set(item.get("check_ids", [])) == expected_check_ids
+            ]
             if required_execution_ids
             else [
                 item
@@ -1553,7 +1608,12 @@ def evaluate(
         except ValueError:
             pass
 
-    diagnostics = _check_files(root, ROOT / "evals" / "fixtures" / case["fixture"], expect)
+    diagnostics = _check_files(
+        root,
+        ROOT / "evals" / "fixtures" / case["fixture"],
+        expect,
+        evaluator_state,
+    )
     manifest_path = root / ".e2e" / "manifest.json"
     manifest, manifest_errors = _read_json(manifest_path, "manifest")
     expected_status = expect.get("manifest_status")
