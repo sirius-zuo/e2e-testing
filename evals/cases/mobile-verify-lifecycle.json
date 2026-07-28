@@ -11,6 +11,7 @@
     "required_journey_ids": ["journey-mobile-lifecycle"],
     "required_check_ids": ["check-ios-login", "check-android-login"],
     "required_execution_evidence_ids": ["evidence-mobile-execution"],
+    "required_cleanup_outcome": "successful",
     "mode": "verify"
   },
   "autonomy": {"mode": "explicit", "auto_repair": false}

@@ -277,6 +277,58 @@ def _classification(item: Any, primary: str) -> bool:
     )
 
 
+def _check_expected_classifications(
+    evidence: Any,
+    expect: dict[str, Any],
+) -> list[str]:
+    records = evidence if isinstance(evidence, list) else []
+    return [
+        f"missing evidence classification: {primary}"
+        for primary in expect.get("required_classifications", [])
+        if not any(_classification(item, primary) for item in records)
+    ]
+
+
+def _check_expected_action_capabilities(
+    actions: Any,
+    expect: dict[str, Any],
+) -> list[str]:
+    records = actions if isinstance(actions, list) else []
+    present = {
+        item.get("capability")
+        for item in records
+        if isinstance(item, dict) and isinstance(item.get("capability"), str)
+    }
+    return [
+        f"missing action capability: {capability}"
+        for capability in expect.get("required_action_capabilities", [])
+        if capability not in present
+    ]
+
+
+def _check_forbidden_execution(
+    evidence: Any,
+    expect: dict[str, Any],
+) -> list[str]:
+    if expect.get("forbid_execution") is not True:
+        return []
+    records = evidence if isinstance(evidence, list) else []
+    attempted_execution = any(
+        isinstance(item, dict)
+        and isinstance(item.get("command"), str)
+        and bool(item["command"].strip())
+        and type(item.get("exit_code")) is int
+        and isinstance(item.get("duration_ms"), (int, float))
+        and not isinstance(item.get("duration_ms"), bool)
+        and isinstance(item.get("check_ids"), list)
+        and bool(item["check_ids"])
+        for item in records
+    )
+    if attempted_execution:
+        return ["mobile case forbids execution evidence"]
+    return []
+
+
 def _linked_classification(
     item: Any,
     primary: str,
@@ -511,6 +563,25 @@ def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list
             for relative in matches
         ):
             diagnostics.append(f"required change missing: {pattern}")
+    allowed_change_globs = expect.get("allowed_change_globs")
+    if isinstance(allowed_change_globs, list):
+        baseline_names = set(baseline)
+        current_names = {relative for relative, _ in files}
+        changed_or_created = {
+            relative
+            for relative, path in files
+            if (
+                relative not in baseline_names
+                or _sha256(path) != baseline[relative]
+            )
+            and not relative.startswith(".e2e/")
+            and not relative.startswith(".agents/skills/")
+            and not relative.startswith(".claude/skills/")
+        }
+        changed_or_created.update(baseline_names - current_names)
+        for relative in sorted(changed_or_created):
+            if not any(_matches(relative, pattern) for pattern in allowed_change_globs):
+                diagnostics.append(f"unauthorized mobile case change: {relative}")
     for relative, expected_hash in expect.get("expected_file_hashes", {}).items():
         actual = workspace / relative
         if not actual.is_file() or _sha256(actual) != expected_hash:
@@ -817,6 +888,103 @@ def _mobile_extension_records(
     )
 
 
+def _check_mobile_expected_state(
+    manifest: dict[str, Any],
+    expect: dict[str, Any],
+    *,
+    drivers: dict[str, dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+) -> list[str]:
+    diagnostics: list[str] = []
+    evidence = manifest.get("evidence", [])
+    evidence_records = evidence if isinstance(evidence, list) else []
+
+    cleanup_outcome = expect.get("required_cleanup_outcome")
+    if cleanup_outcome in {"successful", "failed"}:
+        expected = cleanup_outcome == "successful"
+        if not any(
+            isinstance(item, dict)
+            and item.get("cleanup_successful") is expected
+            and isinstance(item.get("cleanup_action_id"), str)
+            for item in evidence_records
+        ):
+            diagnostics.append(
+                "mobile cleanup success lacks explicit evidence"
+                if expected
+                else "mobile cleanup failure lacks explicit failed evidence"
+            )
+
+    required_roles = expect.get("required_artifact_roles", [])
+    present_roles = {
+        item.get("role")
+        for item in artifacts.values()
+        if isinstance(item.get("role"), str)
+    }
+    for role in required_roles:
+        if role not in present_roles:
+            diagnostics.append(f"missing mobile artifact role: {role}")
+
+    forbidden_roles = set(expect.get("forbidden_artifact_roles", []))
+    for artifact_id, artifact in artifacts.items():
+        if artifact.get("role") in forbidden_roles:
+            diagnostics.append(f"forbidden mobile artifact: {artifact_id}")
+
+    bootstrap = expect.get("required_driver_bootstrap")
+    if isinstance(bootstrap, dict):
+        matching = [
+            item
+            for item in drivers.values()
+            if item.get("kind") == bootstrap.get("kind")
+        ]
+        if not any(
+            item.get("bootstrap_status") == bootstrap.get("status")
+            and item.get("authorization_ref") == bootstrap.get("authorization_ref")
+            for item in matching
+        ):
+            diagnostics.append("mobile driver lacks required bootstrap authorization")
+
+    systems = _systems(manifest)
+    if expect.get("require_empty_credential_refs") is True and any(
+        system.get("target", {}).get("credential_refs")
+        for system in systems
+        if isinstance(system, dict) and isinstance(system.get("target"), dict)
+    ):
+        diagnostics.append("mobile case expected missing credential references")
+
+    commands = [
+        item.get("command", "")
+        for item in evidence_records
+        if isinstance(item, dict) and isinstance(item.get("command"), str)
+    ]
+    for term in expect.get("forbidden_command_terms", []):
+        if any(term.casefold() in command.casefold() for command in commands):
+            diagnostics.append(f"forbidden mobile command term: {term}")
+
+    required_sequence = expect.get("required_lifecycle_sequence")
+    if required_sequence and not any(
+        isinstance(item, dict)
+        and item.get("lifecycle") == required_sequence
+        for item in evidence_records
+    ):
+        diagnostics.append("mobile lifecycle evidence is missing the required sequence")
+
+    if expect.get("required_capability_target_evidence") is True and not any(
+        isinstance(item, dict)
+        and item.get("surface") == "mobile"
+        and isinstance(item.get("adapter"), str)
+        and isinstance(item.get("target_reference"), str)
+        and isinstance(item.get("source_locations"), list)
+        and bool(item["source_locations"])
+        and item.get("read_only") is True
+        for item in evidence_records
+    ):
+        diagnostics.append(
+            "missing capability-unavailable mobile adapter and target evidence"
+        )
+
+    return diagnostics
+
+
 def _check_mobile_contract(
     manifest: dict[str, Any],
     expect: dict[str, Any],
@@ -877,6 +1045,14 @@ def _check_mobile_contract(
         if duplicate_ids:
             diagnostics.extend(duplicate_ids)
             return diagnostics
+        diagnostics.extend(
+            _check_mobile_expected_state(
+                manifest,
+                expect,
+                drivers=drivers,
+                artifacts=artifacts,
+            )
+        )
         mobile_unit_ids = {
             item["id"]
             for item in mobile_units
@@ -1145,6 +1321,9 @@ def _check_mobile_contract(
             diagnostics.append(
                 "blocked cleanup outcome requires explicit failed cleanup evidence"
             )
+    diagnostics.extend(_check_expected_classifications(evidence, expect))
+    diagnostics.extend(_check_expected_action_capabilities(actions, expect))
+    diagnostics.extend(_check_forbidden_execution(evidence, expect))
     return diagnostics
 
 

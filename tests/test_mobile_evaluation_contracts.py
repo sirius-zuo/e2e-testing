@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -10,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from evals.evaluate_result import evaluate
+from evals.evaluate_result import _check_files, evaluate
 from protocol.v2.e2e_protocol import new_manifest
 
 
@@ -355,6 +356,81 @@ class MobileEvaluatorGateTests(unittest.TestCase):
         )
         self.assertIn("cleanup incomplete: mobile-cleanup action lacks successful evidence", diagnostics)
 
+    def test_cleanup_failure_requires_failed_cleanup_and_inconclusive_classification(self):
+        def make_label_only_cleanup_failure(manifest):
+            manifest["run"]["status"] = "blocked"
+            manifest["evidence"] = [{"id": "evidence-cleanup-failed"}]
+            manifest["actions"] = []
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=False,
+            expect={
+                "manifest_status": "blocked",
+                "required_evidence_ids": ["evidence-cleanup-failed"],
+                "required_action_capabilities": ["mobile-cleanup"],
+                "required_classifications": ["inconclusive"],
+                "required_cleanup_outcome": "failed",
+            },
+            mutate_manifest=make_label_only_cleanup_failure,
+        )
+        self.assertIn("missing action capability: mobile-cleanup", diagnostics)
+        self.assertIn("missing evidence classification: inconclusive", diagnostics)
+        self.assertIn("mobile cleanup failure lacks explicit failed evidence", diagnostics)
+
+    def test_production_refusal_forbids_execution(self):
+        diagnostics = self._evaluate(
+            environment={**MOBILE_ENVIRONMENT, "target_tier": "production"},
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "forbid_execution": True,
+            },
+        )
+        self.assertIn("mobile case forbids execution evidence", diagnostics)
+
+    def test_bootstrap_authorization_requires_two_distinct_capabilities(self):
+        def make_unrelated_authorization(manifest):
+            manifest["run"]["status"] = "needs-authorization"
+            manifest["actions"] = [{
+                "id": "action-unrelated",
+                "capability": "unrelated",
+                "journey_ids": [],
+            }]
+            manifest["evidence"].append({
+                "id": "evidence-authorization",
+                "classification": {
+                    "primary": "authorization-required",
+                    "confidence": 1.0,
+                    "rationale": "authorization is required",
+                    "evidence_ids": ["evidence-mobile"],
+                },
+            })
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "needs-authorization",
+                "required_action_capabilities": [
+                    "mobile-repository-bootstrap",
+                    "mobile-host-prerequisite",
+                ],
+                "required_classifications": ["authorization-required"],
+                "forbid_execution": True,
+            },
+            mutate_manifest=make_unrelated_authorization,
+        )
+        self.assertIn(
+            "missing action capability: mobile-repository-bootstrap",
+            diagnostics,
+        )
+        self.assertIn(
+            "missing action capability: mobile-host-prerequisite",
+            diagnostics,
+        )
+
     def test_production_external_effect_is_rejected(self):
         environment = {
             **MOBILE_ENVIRONMENT,
@@ -598,37 +674,105 @@ class MobileEvaluatorGateTests(unittest.TestCase):
 
 
 class MobileCaseContractTests(unittest.TestCase):
-    CASES = (
-        "mobile-generate-appium",
-        "mobile-generate-maestro",
-        "mobile-verify-lifecycle",
-        "mobile-upgrade",
-        "mobile-production-refusal",
-        "mobile-capability-unavailable",
-        "mobile-product-defect",
-        "mobile-cleanup-failure",
-        "mobile-bootstrap-authorization",
-        "mobile-bootstrap-authorized",
-        "mobile-missing-credentials",
-        "mobile-missing-artifact",
-    )
+    def _case(self, case_id):
+        return json.loads(
+            (ROOT / "evals/cases" / f"{case_id}.json").read_text()
+        )
 
-    def test_mobile_cases_exist_and_use_mobile_contract(self):
-        for case_id in self.CASES:
-            path = ROOT / "evals/cases" / f"{case_id}.json"
-            self.assertTrue(path.is_file(), case_id)
-            case = json.loads(path.read_text())
-            self.assertEqual(case["id"], case_id)
-            self.assertEqual(case["entry_skill"], "e2e-mobile")
-            self.assertEqual(case["surface"], "mobile")
-            self.assertEqual(case["fixture"], "mobile-contract")
+    def test_mobile_cases_declare_their_durable_acceptance_contracts(self):
+        expected = {
+            "mobile-generate-appium": {
+                "allowed_change_globs": ["**/appium/**", "**/appium*.js"],
+                "forbid_execution": True,
+            },
+            "mobile-generate-maestro": {
+                "allowed_change_globs": ["**/.maestro/**"],
+                "forbid_execution": True,
+            },
+            "mobile-verify-lifecycle": {
+                "required_cleanup_outcome": "successful",
+            },
+            "mobile-upgrade": {
+                "required_artifact_roles": ["prior", "candidate"],
+                "required_lifecycle_sequence": [
+                    "target",
+                    "prior-install",
+                    "prior-state",
+                    "candidate-upgrade",
+                    "launch",
+                    "cleanup",
+                ],
+                "required_cleanup_outcome": "successful",
+            },
+            "mobile-production-refusal": {
+                "required_action_capabilities": [
+                    "authorize-production-mobile-observation",
+                ],
+                "required_classifications": ["authorization-required"],
+                "forbid_execution": True,
+            },
+            "mobile-capability-unavailable": {
+                "required_capability_target_evidence": True,
+            },
+            "mobile-cleanup-failure": {
+                "required_action_capabilities": ["mobile-cleanup"],
+                "required_classifications": ["inconclusive"],
+                "required_cleanup_outcome": "failed",
+            },
+            "mobile-bootstrap-authorization": {
+                "required_action_capabilities": [
+                    "mobile-repository-bootstrap",
+                    "mobile-host-prerequisite",
+                ],
+                "required_classifications": ["authorization-required"],
+                "forbid_execution": True,
+            },
+            "mobile-bootstrap-authorized": {
+                "required_driver_bootstrap": {
+                    "kind": "appium",
+                    "status": "authorized",
+                    "authorization_ref": "authorization-mobile-bootstrap",
+                },
+                "allowed_change_globs": [
+                    "**/appium/**",
+                    "**/appium*.js",
+                    "package.json",
+                    "package-lock.json",
+                ],
+                "forbid_execution": True,
+            },
+            "mobile-missing-credentials": {
+                "required_action_capabilities": ["provide-mobile-credentials"],
+                "required_classifications": ["authorization-required"],
+                "require_empty_credential_refs": True,
+                "forbid_execution": True,
+            },
+            "mobile-missing-artifact": {
+                "forbidden_artifact_roles": ["candidate"],
+                "forbidden_command_terms": ["build", "install"],
+                "forbid_execution": True,
+            },
+        }
+        for case_id, requirements in expected.items():
+            with self.subTest(case_id=case_id):
+                expect = self._case(case_id)["expect"]
+                for key, value in requirements.items():
+                    self.assertEqual(expect.get(key), value)
 
-    def test_verified_mobile_cases_explicitly_allow_fixture_evidence(self):
-        for case_id in ("mobile-verify-lifecycle", "mobile-upgrade"):
-            case = json.loads(
-                (ROOT / "evals/cases" / f"{case_id}.json").read_text()
+    def test_allowed_mobile_changes_reject_unrelated_workspace_edits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            shutil.copytree(FIXTURE, workspace)
+            app = workspace / "mobile/app.json"
+            app.write_text(app.read_text() + "\n", encoding="utf-8")
+
+            diagnostics = _check_files(
+                workspace,
+                FIXTURE,
+                {"allowed_change_globs": ["**/appium/**", "**/appium*.js"]},
             )
-            self.assertTrue(case["expect"]["allow_fixture_evidence"])
+
+        self.assertIn("unauthorized mobile case change: mobile/app.json", diagnostics)
 
 
 if __name__ == "__main__":

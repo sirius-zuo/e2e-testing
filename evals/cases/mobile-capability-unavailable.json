@@ -3,10 +3,11 @@
   "entry_skill": "e2e-mobile",
   "surface": "mobile",
   "mode": "generate",
-  "prompt": "Attempt to generate tests when the selected driver adapter is not available.",
+  "prompt": "Attempt to generate tests when the selected driver adapter is not available. Record read-only mobile capability evidence with adapter, target_reference, and source_locations.",
   "fixture": "mobile-contract",
   "expect": {
-    "manifest_status": "capability-unavailable"
+    "manifest_status": "capability-unavailable",
+    "required_capability_target_evidence": true
   },
   "autonomy": {"mode": "explicit", "auto_repair": false}
 }

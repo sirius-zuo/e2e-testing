@@ -10,6 +10,8 @@
     "required_journey_ids": ["journey-mobile-login"],
     "required_check_ids": ["check-ios-login", "check-android-login"],
     "created_globs": ["**/appium/**", "**/appium*.js"],
+    "allowed_change_globs": ["**/appium/**", "**/appium*.js"],
+    "forbid_execution": true,
     "mode": "generate"
   },
   "autonomy": {"mode": "explicit", "auto_repair": false}

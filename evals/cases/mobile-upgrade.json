@@ -3,13 +3,24 @@
   "entry_skill": "e2e-mobile",
   "surface": "mobile",
   "mode": "verify",
-  "prompt": "Verify upgrade from prior to candidate using the mobile fixture shim. Record upgrade evidence.",
+  "prompt": "Verify upgrade from prior to candidate using the mobile fixture shim. Record upgrade evidence. Persist evidence-mobile-upgrade with lifecycle [target, prior-install, prior-state, candidate-upgrade, launch, cleanup] and exactly one prior and one candidate artifact.",
   "fixture": "mobile-contract",
   "expect": {
     "manifest_status": "verified",
     "allow_fixture_evidence": true,
     "required_journey_ids": ["journey-mobile-upgrade"],
     "required_check_ids": ["check-upgrade-visible"],
+    "required_execution_evidence_ids": ["evidence-mobile-upgrade"],
+    "required_artifact_roles": ["prior", "candidate"],
+    "required_lifecycle_sequence": [
+      "target",
+      "prior-install",
+      "prior-state",
+      "candidate-upgrade",
+      "launch",
+      "cleanup"
+    ],
+    "required_cleanup_outcome": "successful",
     "mode": "verify"
   },
   "autonomy": {"mode": "explicit", "auto_repair": false}

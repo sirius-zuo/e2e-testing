@@ -3,10 +3,16 @@
   "entry_skill": "e2e-mobile",
   "surface": "mobile",
   "mode": "generate",
-  "prompt": "Attempt repository-local Appium bootstrap without authorization.",
+  "prompt": "Attempt repository-local Appium bootstrap without authorization. Do not bootstrap or execute. Record separate mobile-repository-bootstrap and mobile-host-prerequisite actions with an authorization-required classification.",
   "fixture": "mobile-contract",
   "expect": {
-    "manifest_status": "needs-authorization"
+    "manifest_status": "needs-authorization",
+    "required_action_capabilities": [
+      "mobile-repository-bootstrap",
+      "mobile-host-prerequisite"
+    ],
+    "required_classifications": ["authorization-required"],
+    "forbid_execution": true
   },
   "autonomy": {"mode": "explicit", "auto_repair": false}
 }
