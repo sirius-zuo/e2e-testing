@@ -3,7 +3,7 @@
   "entry_skill": "e2e-mobile",
   "surface": "mobile",
   "mode": "verify",
-  "prompt": "Attempt to verify a production-connected app without authorization. Do not execute. Record evidence-production-authorization, bind action capability authorize-production-mobile-observation to it through evidence_ids, and bind an authorization-required classification to the same evidence.",
+  "prompt": "Attempt to verify a production-connected app without authorization. Record evidence-production-authorization and bind the action and classification through evidence_ids. Do not execute. Record action capability authorize-production-mobile-observation and an authorization-required classification.",
   "fixture": "mobile-contract",
   "expect": {
     "manifest_status": "needs-authorization",

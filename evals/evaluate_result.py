@@ -686,36 +686,54 @@ def _check_files(
     allowed_change_globs = expect.get("allowed_change_globs")
     if isinstance(allowed_change_globs, list):
         installed_baseline: dict[str, Any] = {}
+        external_baseline_valid = True
         if state_dir is not None:
             snapshot, snapshot_errors = _read_json(
                 state_dir / WORKSPACE_BASELINE,
                 "workspace baseline",
             )
-            if not snapshot_errors:
+            if snapshot_errors:
+                diagnostics.extend(snapshot_errors)
+                external_baseline_valid = False
+            elif not all(
+                isinstance(relative, str)
+                and bool(relative)
+                and isinstance(digest, str)
+                and re.fullmatch(r"[0-9a-f]{64}", digest)
+                for relative, digest in snapshot.items()
+            ):
+                diagnostics.append(
+                    "invalid workspace baseline: expected SHA-256 hash map"
+                )
+                external_baseline_valid = False
+            else:
                 assert snapshot is not None
                 installed_baseline = snapshot
-        initial_baseline = dict(baseline)
-        initial_baseline.update(installed_baseline)
-        baseline_names = set(initial_baseline)
-        current_names = {relative for relative, _ in files}
-        changed_or_created = {
-            relative
-            for relative, path in files
-            if (
-                relative not in baseline_names
-                or _sha256(path) != initial_baseline[relative]
-            )
-            and not relative.startswith(".e2e/")
-            and relative != ".fixture-baseline.json"
-        }
-        changed_or_created.update(baseline_names - current_names)
-        for relative in sorted(changed_or_created):
-            protected = relative.startswith(PROTECTED_SKILL_ROOTS)
-            if protected or not any(
-                _matches(relative, pattern)
-                for pattern in allowed_change_globs
-            ):
-                diagnostics.append(f"unauthorized mobile case change: {relative}")
+        if external_baseline_valid:
+            initial_baseline = dict(baseline)
+            initial_baseline.update(installed_baseline)
+            baseline_names = set(initial_baseline)
+            current_names = {relative for relative, _ in files}
+            changed_or_created = {
+                relative
+                for relative, path in files
+                if (
+                    relative not in baseline_names
+                    or _sha256(path) != initial_baseline[relative]
+                )
+                and not relative.startswith(".e2e/")
+                and relative != ".fixture-baseline.json"
+            }
+            changed_or_created.update(baseline_names - current_names)
+            for relative in sorted(changed_or_created):
+                protected = relative.startswith(PROTECTED_SKILL_ROOTS)
+                if protected or not any(
+                    _matches(relative, pattern)
+                    for pattern in allowed_change_globs
+                ):
+                    diagnostics.append(
+                        f"unauthorized mobile case change: {relative}"
+                    )
     for relative, expected_hash in expect.get("expected_file_hashes", {}).items():
         actual = workspace / relative
         if not actual.is_file() or _sha256(actual) != expected_hash:
@@ -1050,9 +1068,14 @@ def _check_mobile_expected_state(
         for item in expect.get("required_execution_evidence_ids", [])
         if isinstance(item, str)
     }
+    required_evidence_ids = required_execution_ids | {
+        item
+        for item in expect.get("required_evidence_ids", [])
+        if isinstance(item, str)
+    }
     expected_evidence = [
         evidence_by_id[item]
-        for item in required_execution_ids
+        for item in required_evidence_ids
         if item in evidence_by_id
     ]
     required_check_ids = {
@@ -1069,18 +1092,31 @@ def _check_mobile_expected_state(
             if check_id in checks_by_id
         )
     if not expected_check_ids:
+        expected_phase = expect.get(
+            "_phase_name",
+            _run_value(manifest, "mode"),
+        )
+        final_revision = _run_value(manifest, "revision")
         expected_check_ids.update(
             check_id
-            for check_id, check in checks_by_id.items()
-            if check.get("execution_unit_id") in mobile_unit_ids
+            for item in evidence_records
+            if _is_execution_evidence(
+                item,
+                set(checks_by_id),
+                "mobile",
+            )
+            and item.get("phase") == expected_phase
+            and type(final_revision) is int
+            and type(item.get("manifest_revision_consumed")) is int
+            and final_revision == item["manifest_revision_consumed"] + 1
+            for check_id in item.get("check_ids", [])
+            if checks_by_id.get(check_id, {}).get("status") == "passed"
         )
     expected_unit_ids = {
         checks_by_id[check_id].get("execution_unit_id")
         for check_id in expected_check_ids
         if check_id in checks_by_id
     }
-    if not expected_unit_ids:
-        expected_unit_ids = set(mobile_unit_ids)
     bound_profiles = [
         profile
         for profile in lifecycle_profiles
@@ -1113,10 +1149,43 @@ def _check_mobile_expected_state(
     cleanup_outcome = expect.get("required_cleanup_outcome")
     if cleanup_outcome in {"successful", "failed"}:
         expected = cleanup_outcome == "successful"
+        required_journey_ids = {
+            item
+            for item in expect.get("required_journey_ids", [])
+            if isinstance(item, str)
+        }
+        required_journey_ids.update(
+            checks_by_id[check_id].get("journey_id")
+            for check_id in expected_check_ids
+            if check_id in checks_by_id
+            and isinstance(
+                checks_by_id[check_id].get("journey_id"),
+                str,
+            )
+        )
+        cleanup_actions_by_id = {
+            item["id"]: item
+            for item in manifest.get("actions", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item.get("capability") == "mobile-cleanup"
+        }
         if not any(
             isinstance(item, dict)
             and item.get("cleanup_successful") is expected
             and isinstance(item.get("cleanup_action_id"), str)
+            and item["cleanup_action_id"] in cleanup_actions_by_id
+            and isinstance(
+                cleanup_actions_by_id[item["cleanup_action_id"]].get(
+                    "journey_ids"
+                ),
+                list,
+            )
+            and required_journey_ids <= set(
+                cleanup_actions_by_id[item["cleanup_action_id"]][
+                    "journey_ids"
+                ]
+            )
             for item in evidence_records
         ):
             diagnostics.append(
