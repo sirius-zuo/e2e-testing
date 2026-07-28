@@ -114,6 +114,17 @@ When service boundaries are confirmed:
 - Route complete work to `e2e-service` only.
 - The same framework gate logic applies but uses service boundary evidence instead of browser drivers.
 
+### Mobile boundary gate
+
+When mobile boundaries are confirmed:
+- Detect Appium (`appium.config.js`, `androidTest/`, `ios/`, XCUITest/UiAutomator2) or
+  Maestro (`.maestro/`, flow YAML) repository-native conventions.
+- Detox and Flutter `integration_test` are treated as non-black-box capability evidence;
+  they are recorded but never used as an acceptance oracle or a migration target.
+- Persist the detected driver, source locations, and target tier before routing.
+- Never mutate an unsupported setup or migrate between drivers.
+- Route complete mobile work to `e2e-mobile` only.
+
 ### Database support
 
 - Use `database-setup`, `database-cleanup`, and `database-diagnostics` capabilities for execution

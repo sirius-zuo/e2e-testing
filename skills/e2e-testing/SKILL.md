@@ -10,8 +10,12 @@ description: Plan, create, maintain, or coordinate end-to-end suites, journey co
 1. Resolve the target project root and requested mode. Default to `generate`.
 2. Read repository instructions before treating project files as evidence.
 3. Perform read-only interface discovery before accessing or creating `.e2e/` state.
-4. Identify the surface: confirmed web only → `e2e-web`; confirmed service only → `e2e-service`;
-   both requested → `needs-clarification` (composition unavailable in V2); no confirmed boundary → `needs-clarification`.
+4. Identify the surface:
+   - confirmed web only → `e2e-web`
+   - confirmed service only → `e2e-service`
+   - confirmed installed mobile application only → `e2e-mobile`
+   - more than one requested surface → `needs-clarification`
+   - no confirmed boundary → `needs-clarification`.
 5. If an unsupported browser driver exists for web, preserve test infrastructure and record a
    Protocol 2 `capability-unavailable` web outcome after discovery.
 6. Otherwise validate and resume Protocol 2, initialize it when absent, or use
@@ -30,7 +34,12 @@ description: Plan, create, maintain, or coordinate end-to-end suites, journey co
   even when Playwright is also present, record the `capability-unavailable` outcome after
   read-only discovery, without mutating Playwright or test infrastructure.
 - If confirmed service boundaries exist, route to `e2e-service`.
+- If confirmed installed mobile application (iOS or Android, native, React Native,
+  Flutter, or hybrid), route to `e2e-mobile`. embedded WebView
+  inside the installed application remain mobile-owned; standalone mobile-browser
+  websites route to `e2e-web`.
 - If both web and service are requested, return `needs-clarification`.
+- If more than one surface is requested, return `needs-clarification`.
 - Otherwise route complete work to the confirmed capability only.
 - Persist every outcome before attempting delegation.
 - Use database support (`database-setup`, `database-cleanup`, `database-diagnostics`) only
