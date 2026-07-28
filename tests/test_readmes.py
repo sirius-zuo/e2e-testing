@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import unittest
 
 
@@ -128,6 +129,43 @@ class ReadmeContractTests(unittest.TestCase):
         ):
             self.assertIn(required, text)
         self.assertEqual(text.count("### Mobile cases"), 2)
+
+    def test_host_evaluation_guide_lists_exact_host_specific_mobile_commands(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        expected_cases = (
+            "mobile-generate-appium",
+            "mobile-generate-maestro",
+            "mobile-verify-lifecycle",
+            "mobile-production-refusal",
+        )
+        expected_hosts = {"Codex": "codex", "Claude Code": "claude"}
+        host_sections = dict(
+            re.findall(
+                r"^## (Codex|Claude Code)\n(?P<section>.*?)(?=^## |\Z)",
+                text,
+                flags=re.MULTILINE | re.DOTALL,
+            )
+        )
+
+        self.assertEqual(set(host_sections), set(expected_hosts))
+        for host_name, host_flag in expected_hosts.items():
+            mobile_blocks = re.findall(
+                r"^### Mobile cases\n(?P<body>.*?)(?=^### |\Z)",
+                host_sections[host_name],
+                flags=re.MULTILINE | re.DOTALL,
+            )
+            self.assertEqual(len(mobile_blocks), 1, host_name)
+            command_block = re.match(
+                r"\n```sh\n(?P<commands>(?:[^\n]+\n)*)```\n*",
+                mobile_blocks[0],
+            )
+            self.assertIsNotNone(command_block, host_name)
+
+            expected_commands = [
+                f"python3 evals/run_host_eval.py --host {host_flag} --case {case}"
+                for case in expected_cases
+            ]
+            self.assertEqual(command_block["commands"].splitlines(), expected_commands)
 
 
 if __name__ == "__main__":
