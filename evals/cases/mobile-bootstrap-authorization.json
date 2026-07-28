@@ -1,0 +1,12 @@
+{
+  "id": "mobile-bootstrap-authorization",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "generate",
+  "prompt": "Attempt repository-local Appium bootstrap without authorization.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "needs-authorization"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

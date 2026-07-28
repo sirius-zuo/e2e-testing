@@ -154,7 +154,7 @@ def _repair_attempt() -> dict:
 class FixtureContractTests(unittest.TestCase):
     def test_cases_have_required_fields_and_existing_fixtures(self):
         case_paths = sorted(CASES.glob("*.json"))
-        self.assertEqual(len(case_paths), 17)
+        self.assertEqual(len(case_paths), 29)
         original_cases = {
             "greenfield-source", "live-assisted-generation", "existing-playwright",
             "unsupported-cypress", "conflicting-evidence", "verify-pass",
@@ -165,13 +165,24 @@ class FixtureContractTests(unittest.TestCase):
             "service-production-refusal", "service-capability-unavailable",
             "service-product-defect", "service-database-support",
         }
-        self.assertEqual({path.stem for path in case_paths}, original_cases | service_cases)
+        mobile_cases = {
+            "mobile-generate-appium", "mobile-generate-maestro",
+            "mobile-verify-lifecycle", "mobile-upgrade",
+            "mobile-production-refusal", "mobile-capability-unavailable",
+            "mobile-product-defect", "mobile-cleanup-failure",
+            "mobile-bootstrap-authorization", "mobile-bootstrap-authorized",
+            "mobile-missing-credentials", "mobile-missing-artifact",
+        }
+        self.assertEqual(
+            {path.stem for path in case_paths},
+            original_cases | service_cases | mobile_cases,
+        )
         for path in case_paths:
             with self.subTest(case=path.stem):
                 case = json.loads(path.read_text())
                 self.assertTrue(REQUIRED_CASE_FIELDS <= set(case))
                 self.assertTrue((FIXTURES / case["fixture"]).is_dir())
-                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service"})
+                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service", "e2e-mobile"})
                 self.assertNotIn("e2e-web-playwright", json.dumps(case))
 
     def test_verified_case_expectations_name_the_execution_evidence_to_bind(self):
@@ -848,13 +859,13 @@ class HostHarnessTests(unittest.TestCase):
             ["claude", "-p", "--permission-mode", "acceptEdits", "--no-session-persistence"],
         )
 
-    def test_installs_both_skills_in_the_host_specific_directory(self):
+    def test_installs_all_skills_in_the_host_specific_directory(self):
         for host, skill_root in (("codex", ".agents/skills"), ("claude", ".claude/skills")):
             with self.subTest(host=host):
                 self._run(host, keep_results=True)
                 workspace = next((self.results / host / "greenfield-source").glob("*/workspace"))
-                self.assertTrue((workspace / skill_root / "e2e-testing" / "SKILL.md").is_file())
-                self.assertTrue((workspace / skill_root / "e2e-web" / "SKILL.md").is_file())
+                for skill in ("e2e-testing", "e2e-web", "e2e-service", "e2e-mobile"):
+                    self.assertTrue((workspace / skill_root / skill / "SKILL.md").is_file())
                 self.assertFalse((workspace / skill_root / "e2e-web-playwright").exists())
 
     def test_each_run_uses_a_fresh_fixture_copy_and_never_the_source_fixture(self):

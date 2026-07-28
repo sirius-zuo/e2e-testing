@@ -1,0 +1,16 @@
+{
+  "id": "mobile-upgrade",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "verify",
+  "prompt": "Verify upgrade from prior to candidate using the mobile fixture shim. Record upgrade evidence.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "allow_fixture_evidence": true,
+    "required_journey_ids": ["journey-mobile-upgrade"],
+    "required_check_ids": ["check-upgrade-visible"],
+    "mode": "verify"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

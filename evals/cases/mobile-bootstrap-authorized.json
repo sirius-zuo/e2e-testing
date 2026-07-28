@@ -1,0 +1,13 @@
+{
+  "id": "mobile-bootstrap-authorized",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "generate",
+  "prompt": "Generate tests after explicit bootstrap authorization with bounded dependency changes.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "generated-unverified",
+    "mode": "generate"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

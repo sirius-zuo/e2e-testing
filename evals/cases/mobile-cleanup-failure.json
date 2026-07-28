@@ -1,0 +1,13 @@
+{
+  "id": "mobile-cleanup-failure",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "verify",
+  "prompt": "Verify a scenario where cleanup fails after a successful check.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "blocked",
+    "required_evidence_ids": ["evidence-cleanup-failed"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

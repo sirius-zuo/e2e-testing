@@ -1,0 +1,16 @@
+{
+  "id": "mobile-generate-appium",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "generate",
+  "prompt": "Preserve the selected existing driver convention. Generate for the iOS simulator and Android emulator. Do not build, install, launch, or execute. Record e2e.mobile@1.0 and finish generated-unverified.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "generated-unverified",
+    "required_journey_ids": ["journey-mobile-login"],
+    "required_check_ids": ["check-ios-login", "check-android-login"],
+    "created_globs": ["**/appium/**", "**/appium*.js"],
+    "mode": "generate"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

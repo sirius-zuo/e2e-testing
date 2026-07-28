@@ -1,0 +1,12 @@
+{
+  "id": "mobile-missing-artifact",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "verify",
+  "prompt": "Attempt verification without a candidate artifact or approved build command.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "needs-clarification"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}
