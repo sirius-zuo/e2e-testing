@@ -756,6 +756,47 @@ def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], su
     return diagnostics
 
 
+def _mobile_extension_records(
+    extension: dict[str, Any],
+) -> tuple[
+    str | None,
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    data = extension.get("data")
+    if not isinstance(data, dict):
+        return None, {}, {}, {}, []
+    application = data.get("application")
+    application_id = (
+        application.get("id")
+        if isinstance(application, dict) and isinstance(application.get("id"), str)
+        else None
+    )
+
+    def index_records(name: str) -> dict[str, dict[str, Any]]:
+        records = data.get(name)
+        if not isinstance(records, list):
+            return {}
+        return {
+            item["id"]: item
+            for item in records
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+
+    profiles = data.get("lifecycle_profiles")
+    return (
+        application_id,
+        index_records("drivers"),
+        index_records("targets"),
+        index_records("artifacts"),
+        [item for item in profiles if isinstance(item, dict)]
+        if isinstance(profiles, list)
+        else [],
+    )
+
+
 def _check_mobile_contract(
     manifest: dict[str, Any],
     expect: dict[str, Any],
@@ -770,6 +811,7 @@ def _check_mobile_contract(
         if isinstance(item, dict) and item.get("surface") == "mobile"
     ]
     if not mobile_units:
+        diagnostics.append("mobile case requires at least one mobile execution unit")
         return diagnostics
 
     extensions_by_id = {
@@ -796,6 +838,91 @@ def _check_mobile_contract(
         diagnostics.append(
             "mobile execution units must share a single e2e.mobile extension"
         )
+
+    bound_extensions = [
+        extensions_by_id[extension_id]
+        for extension_id in bound_ids
+        if extension_id in extensions_by_id
+    ]
+    if len(bound_extensions) == 1:
+        (
+            application_id,
+            drivers,
+            targets,
+            artifacts,
+            lifecycle_profiles,
+        ) = _mobile_extension_records(bound_extensions[0])
+        mobile_unit_ids = {
+            item["id"]
+            for item in mobile_units
+            if isinstance(item.get("id"), str)
+        }
+
+        for artifact_id, artifact in artifacts.items():
+            if artifact.get("application_id") != application_id:
+                diagnostics.append(
+                    f"mobile artifact {artifact_id} does not reference "
+                    f"application {application_id}"
+                )
+
+        for target_id, target in targets.items():
+            driver_id = target.get("driver_id")
+            if driver_id not in drivers:
+                diagnostics.append(
+                    f"mobile target {target_id} references unknown driver {driver_id}"
+                )
+            if (
+                target.get("kind") in {"real", "remote"}
+                and target.get("provisioning_status") != "ready"
+            ):
+                diagnostics.append(f"mobile target {target_id} is not provisioned")
+
+        for profile in lifecycle_profiles:
+            profile_id = profile.get("id")
+            unit_id = profile.get("execution_unit_id")
+            target_id = profile.get("target_id")
+            if unit_id not in mobile_unit_ids:
+                diagnostics.append(
+                    f"mobile lifecycle {profile_id} references unknown "
+                    f"execution unit {unit_id}"
+                )
+            target = targets.get(target_id)
+            if target is None:
+                diagnostics.append(
+                    f"mobile lifecycle {profile_id} references unknown target {target_id}"
+                )
+
+            selected_artifacts = []
+            for artifact_id in profile.get("artifact_ids", []):
+                artifact = artifacts.get(artifact_id)
+                if artifact is None:
+                    diagnostics.append(
+                        f"mobile lifecycle {profile_id} references unknown "
+                        f"artifact {artifact_id}"
+                    )
+                else:
+                    selected_artifacts.append(artifact)
+
+            if profile.get("upgrade") is True:
+                roles = [artifact.get("role") for artifact in selected_artifacts]
+                if roles.count("prior") != 1 or roles.count("candidate") != 1:
+                    diagnostics.append(
+                        f"mobile lifecycle {profile_id} upgrade requires "
+                        "one prior and one candidate artifact"
+                    )
+
+            if (
+                profile.get("reset_policy") == "virtual-snapshot"
+                and (
+                    not isinstance(target, dict)
+                    or target.get("kind") not in {"simulator", "emulator"}
+                    or target.get("disposable") is not True
+                )
+            ):
+                diagnostics.append(
+                    f"mobile lifecycle {profile_id} virtual-snapshot "
+                    "requires a disposable virtual target"
+                )
 
     for item in evidence:
         if not isinstance(item, dict):

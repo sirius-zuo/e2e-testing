@@ -6,7 +6,9 @@ import json
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from evals.evaluate_result import evaluate
 from protocol.v2.e2e_protocol import new_manifest
@@ -14,6 +16,7 @@ from protocol.v2.e2e_protocol import new_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "evals/fixtures/mobile-contract"
+ManifestMutation = Callable[[dict[str, Any]], None]
 
 
 MOBILE_ENVIRONMENT = {
@@ -82,6 +85,7 @@ class MobileEvaluatorGateTests(unittest.TestCase):
         cleanup_successful,
         expect,
         extension_id="extension-mobile",
+        mutate_manifest: ManifestMutation | None = None,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
@@ -164,7 +168,7 @@ class MobileEvaluatorGateTests(unittest.TestCase):
                         "authorization_ref": "",
                     }],
                     "targets": [{
-                        "id": "target-ios",
+                        "id": "target-ios-sim",
                         "platform": "ios",
                         "kind": "simulator",
                         "device_ref": "fixture-ios",
@@ -188,7 +192,7 @@ class MobileEvaluatorGateTests(unittest.TestCase):
                     "lifecycle_profiles": [{
                         "id": "lifecycle-ios",
                         "execution_unit_id": "unit-mobile",
-                        "target_id": "target-ios",
+                        "target_id": "target-ios-sim",
                         "artifact_ids": ["artifact-candidate-ios"],
                         "install_policy": "fresh",
                         "launch_policy": "cold",
@@ -203,6 +207,8 @@ class MobileEvaluatorGateTests(unittest.TestCase):
                     }],
                 },
             }]
+            if mutate_manifest is not None:
+                mutate_manifest(manifest)
             (workspace / ".e2e/manifest.json").write_text(
                 json.dumps(manifest, indent=2),
                 encoding="utf-8",
@@ -268,6 +274,140 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             "execution_unit unit-mobile does not reference the e2e.mobile@1.0 extension",
             diagnostics,
         )
+
+    def test_mobile_surface_requires_a_mobile_execution_unit(self):
+        def remove_mobile_unit(manifest):
+            manifest["execution_units"] = []
+            manifest["checks"] = []
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=remove_mobile_unit,
+        )
+        self.assertIn(
+            "mobile case requires at least one mobile execution unit",
+            diagnostics,
+        )
+
+    def test_mobile_target_driver_reference_must_resolve(self):
+        def break_driver_reference(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["targets"][0]["driver_id"] = "driver-missing"
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=break_driver_reference,
+        )
+        self.assertIn(
+            "mobile target target-ios-sim references unknown driver driver-missing",
+            diagnostics,
+        )
+
+    def test_mobile_lifecycle_references_must_resolve(self):
+        mutations = (
+            ("execution_unit_id", "unit-missing", "execution unit"),
+            ("target_id", "target-missing", "target"),
+        )
+        for field, value, label in mutations:
+            with self.subTest(field=field):
+                def break_reference(manifest, field=field, value=value):
+                    profile = manifest["extensions"][0]["data"]["lifecycle_profiles"][0]
+                    profile[field] = value
+
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+                    mutate_manifest=break_reference,
+                )
+                self.assertIn(
+                    f"mobile lifecycle lifecycle-ios references unknown {label} {value}",
+                    diagnostics,
+                )
+
+    def test_mobile_lifecycle_artifact_reference_must_resolve(self):
+        def break_artifact_reference(manifest):
+            profile = manifest["extensions"][0]["data"]["lifecycle_profiles"][0]
+            profile["artifact_ids"] = ["artifact-missing"]
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=break_artifact_reference,
+        )
+        self.assertIn(
+            "mobile lifecycle lifecycle-ios references unknown artifact artifact-missing",
+            diagnostics,
+        )
+
+    def test_mobile_artifact_must_reference_the_declared_application(self):
+        def break_application_reference(manifest):
+            artifact = manifest["extensions"][0]["data"]["artifacts"][0]
+            artifact["application_id"] = "app-other"
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=break_application_reference,
+        )
+        self.assertIn(
+            "mobile artifact artifact-candidate-ios does not reference application app-mobile",
+            diagnostics,
+        )
+
+    def test_upgrade_requires_exactly_one_prior_and_candidate(self):
+        def make_invalid_upgrade(manifest):
+            profile = manifest["extensions"][0]["data"]["lifecycle_profiles"][0]
+            profile["upgrade"] = True
+            profile["install_policy"] = "upgrade"
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=make_invalid_upgrade,
+        )
+        self.assertIn(
+            "mobile lifecycle lifecycle-ios upgrade requires one prior and one candidate artifact",
+            diagnostics,
+        )
+
+    def test_virtual_snapshot_requires_a_disposable_virtual_target(self):
+        def make_real_snapshot(manifest):
+            target = manifest["extensions"][0]["data"]["targets"][0]
+            target.update(kind="real", disposable=False)
+            profile = manifest["extensions"][0]["data"]["lifecycle_profiles"][0]
+            profile["reset_policy"] = "virtual-snapshot"
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=make_real_snapshot,
+        )
+        self.assertIn(
+            "mobile lifecycle lifecycle-ios virtual-snapshot requires a disposable virtual target",
+            diagnostics,
+        )
+
+    def test_real_or_remote_target_must_be_provisioned(self):
+        def make_unprovisioned_real_target(manifest):
+            target = manifest["extensions"][0]["data"]["targets"][0]
+            target.update(kind="real", provisioning_status="unknown")
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=make_unprovisioned_real_target,
+        )
+        self.assertIn("mobile target target-ios-sim is not provisioned", diagnostics)
 
 
 class MobileCaseContractTests(unittest.TestCase):
