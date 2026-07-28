@@ -34,6 +34,68 @@ MOBILE_ENVIRONMENT = {
     "evidence_origin": "fixture",
 }
 
+BOOTSTRAP_EVALUATOR_EXPECT = {
+    "manifest_status": "generated-unverified",
+    "mode": "generate",
+    "required_driver_bootstrap": {
+        "kind": "appium",
+        "status": "authorized",
+        "authorization_ref": "authorization-mobile-bootstrap",
+    },
+    "forbid_execution": True,
+}
+
+
+def bind_valid_production_refusal(manifest):
+    manifest["run"]["status"] = "needs-authorization"
+    manifest["evidence"] = [{
+        "id": "evidence-production-authorization",
+        "surface": "mobile",
+        "read_only": True,
+    }, {
+        "id": "evidence-production-classification",
+        "classification": {
+            "primary": "authorization-required",
+            "confidence": 1.0,
+            "rationale": "production access is not authorized",
+            "evidence_ids": ["evidence-production-authorization"],
+        },
+    }]
+    manifest["actions"] = [{
+        "id": "action-production-authorization",
+        "capability": "authorize-production-mobile-observation",
+        "journey_ids": ["journey-mobile"],
+        "evidence_ids": ["evidence-production-authorization"],
+    }]
+    mobile = manifest["extensions"][0]["data"]
+    mobile["targets"][0]["evidence_refs"] = [
+        "evidence-production-authorization"
+    ]
+    profile = mobile["lifecycle_profiles"][0]
+    profile["cleanup_action_refs"] = []
+
+
+def bind_bootstrap_authorized_manifest(manifest, authorization=None):
+    manifest["run"].update(
+        status="generated-unverified",
+        mode="generate",
+    )
+    manifest["journeys"][0]["status"] = "planned"
+    manifest["execution_units"][0]["status"] = "planned"
+    manifest["checks"][0]["status"] = "planned"
+    manifest["evidence"] = [manifest["evidence"][1]]
+    mobile = manifest["extensions"][0]["data"]
+    mobile["targets"][0]["evidence_refs"] = []
+    mobile["drivers"][0].update(
+        bootstrap_status="authorized",
+        authorization_ref="authorization-mobile-bootstrap",
+    )
+    manifest["authorizations"] = (
+        [authorization]
+        if authorization is not None
+        else []
+    )
+
 
 class MobileFixtureContractTests(unittest.TestCase):
     def test_mobile_fixture_has_required_repository_evidence(self):
@@ -330,8 +392,8 @@ class MobileEvaluatorGateTests(unittest.TestCase):
                     diagnostics,
                 )
 
-    def test_required_mobile_execution_rejects_boolean_or_negative_duration(self):
-        for duration in (True, -1):
+    def test_required_mobile_execution_rejects_boolean_negative_or_non_finite_duration(self):
+        for duration in (True, -1, float("nan"), float("inf")):
             with self.subTest(duration=duration):
                 def make_invalid_duration(manifest, duration=duration):
                     manifest["evidence"][0]["duration_ms"] = duration
@@ -474,6 +536,48 @@ class MobileEvaluatorGateTests(unittest.TestCase):
         )
         self.assertIn("cleanup incomplete: mobile-cleanup action lacks successful evidence", diagnostics)
 
+    def test_cleanup_outcome_accepts_selected_lifecycle_action(self):
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_check_ids": ["check-mobile"],
+                "required_execution_evidence_ids": ["evidence-mobile"],
+                "required_cleanup_outcome": "successful",
+            },
+        )
+        self.assertEqual(diagnostics, [])
+
+    def test_cleanup_outcome_rejects_action_outside_selected_lifecycle(self):
+        def bind_cleanup_to_unrelated_action(manifest):
+            manifest["actions"].append({
+                "id": "action-unrelated-cleanup",
+                "capability": "mobile-cleanup",
+                "journey_ids": ["journey-mobile"],
+            })
+            manifest["evidence"][1][
+                "cleanup_action_id"
+            ] = "action-unrelated-cleanup"
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={
+                "manifest_status": "verified",
+                "allow_fixture_evidence": True,
+                "required_check_ids": ["check-mobile"],
+                "required_execution_evidence_ids": ["evidence-mobile"],
+                "required_cleanup_outcome": "successful",
+            },
+            mutate_manifest=bind_cleanup_to_unrelated_action,
+        )
+        self.assertIn(
+            "mobile cleanup success lacks explicit evidence",
+            diagnostics,
+        )
+
     def test_cleanup_failure_requires_failed_cleanup_and_inconclusive_classification(self):
         def make_label_only_cleanup_failure(manifest):
             manifest["run"]["status"] = "blocked"
@@ -560,6 +664,46 @@ class MobileEvaluatorGateTests(unittest.TestCase):
                     "authorization-required",
                     diagnostics,
                 )
+
+    def test_production_refusal_rejects_local_target_context(self):
+        expect = {
+            **json.loads(
+                (
+                    ROOT / "evals/cases/mobile-production-refusal.json"
+                ).read_text()
+            )["expect"],
+            "required_target_tier": "production",
+        }
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect=expect,
+            mutate_manifest=bind_valid_production_refusal,
+        )
+        self.assertIn(
+            "mobile case requires target tier production",
+            diagnostics,
+        )
+
+    def test_production_refusal_accepts_bound_production_target_context(self):
+        expect = {
+            **json.loads(
+                (
+                    ROOT / "evals/cases/mobile-production-refusal.json"
+                ).read_text()
+            )["expect"],
+            "required_target_tier": "production",
+        }
+        diagnostics = self._evaluate(
+            environment={
+                **MOBILE_ENVIRONMENT,
+                "target_tier": "production",
+            },
+            cleanup_successful=True,
+            expect=expect,
+            mutate_manifest=bind_valid_production_refusal,
+        )
+        self.assertEqual(diagnostics, [])
 
     def test_cleanup_failure_rejects_invalid_bound_classification_confidence(self):
         for confidence in (True, float("inf"), 1.1):
@@ -1198,35 +1342,76 @@ class MobileEvaluatorGateTests(unittest.TestCase):
 
     def test_case_bootstrap_accepts_single_unambiguous_no_execution_lifecycle(self):
         def authorize_only_bound_driver_without_execution(manifest):
-            manifest["run"].update(
-                status="generated-unverified",
-                mode="generate",
-            )
-            manifest["journeys"][0]["status"] = "planned"
-            manifest["execution_units"][0]["status"] = "planned"
-            manifest["checks"][0]["status"] = "planned"
-            manifest["evidence"] = [manifest["evidence"][1]]
-            driver = manifest["extensions"][0]["data"]["drivers"][0]
-            driver.update(
-                bootstrap_status="authorized",
-                authorization_ref="authorization-mobile-bootstrap",
+            bind_bootstrap_authorized_manifest(
+                manifest,
+                {
+                    "id": "authorization-mobile-bootstrap",
+                    "status": "approved",
+                    "capability": "mobile-repository-bootstrap",
+                    "target_reference": "target-ios-sim",
+                },
             )
 
-        expect = json.loads(
-            (
-                ROOT / "evals/cases/mobile-bootstrap-authorized.json"
-            ).read_text()
-        )["expect"]
         diagnostics = self._evaluate(
             environment=MOBILE_ENVIRONMENT,
             cleanup_successful=True,
-            expect=expect,
+            expect=BOOTSTRAP_EVALUATOR_EXPECT,
             mutate_manifest=authorize_only_bound_driver_without_execution,
         )
-        self.assertNotIn(
+        self.assertEqual(diagnostics, [])
+
+    def test_required_bootstrap_rejects_missing_authorization_record(self):
+        def omit_authorization(manifest):
+            bind_bootstrap_authorized_manifest(manifest)
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect=BOOTSTRAP_EVALUATOR_EXPECT,
+            mutate_manifest=omit_authorization,
+        )
+        self.assertIn(
             "mobile driver lacks required bootstrap authorization",
             diagnostics,
         )
+
+    def test_required_bootstrap_rejects_invalid_authorization_record(self):
+        invalid_records = (
+            {
+                "id": "authorization-mobile-bootstrap",
+                "status": "pending",
+                "capability": "mobile-repository-bootstrap",
+                "target_reference": "target-ios-sim",
+            },
+            {
+                "id": "authorization-mobile-bootstrap",
+                "status": "approved",
+                "capability": "unrelated",
+                "target_reference": "target-ios-sim",
+            },
+            {
+                "id": "authorization-mobile-bootstrap",
+                "status": "approved",
+                "capability": "mobile-repository-bootstrap",
+                "target_reference": "target-other",
+            },
+        )
+        for authorization in invalid_records:
+            with self.subTest(authorization=authorization):
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect=BOOTSTRAP_EVALUATOR_EXPECT,
+                    mutate_manifest=lambda manifest, authorization=authorization:
+                        bind_bootstrap_authorized_manifest(
+                            manifest,
+                            authorization,
+                        ),
+                )
+                self.assertIn(
+                    "mobile driver lacks required bootstrap authorization",
+                    diagnostics,
+                )
 
     def test_capability_unavailable_evidence_must_match_bound_target_and_driver(self):
         def make_arbitrary_capability_evidence(manifest):
@@ -1449,6 +1634,23 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_mobile_target_evidence_reference_must_resolve(self):
+        def break_evidence_reference(manifest):
+            target = manifest["extensions"][0]["data"]["targets"][0]
+            target["evidence_refs"] = ["evidence-missing"]
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=break_evidence_reference,
+        )
+        self.assertIn(
+            "mobile target target-ios-sim references unknown evidence "
+            "evidence-missing",
+            diagnostics,
+        )
+
     def test_mobile_lifecycle_references_must_resolve(self):
         mutations = (
             ("execution_unit_id", "unit-missing", "execution unit"),
@@ -1486,6 +1688,37 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             "mobile lifecycle lifecycle-ios references unknown artifact artifact-missing",
             diagnostics,
         )
+
+    def test_mobile_lifecycle_action_references_must_resolve(self):
+        mutations = (
+            ("setup_action_refs", "setup action"),
+            ("cleanup_action_refs", "cleanup action"),
+        )
+        for field, label in mutations:
+            with self.subTest(field=field):
+                def break_action_reference(
+                    manifest,
+                    field=field,
+                ):
+                    profile = manifest["extensions"][0]["data"][
+                        "lifecycle_profiles"
+                    ][0]
+                    profile[field] = ["action-missing"]
+
+                diagnostics = self._evaluate(
+                    environment=MOBILE_ENVIRONMENT,
+                    cleanup_successful=True,
+                    expect={
+                        "manifest_status": "verified",
+                        "allow_fixture_evidence": True,
+                    },
+                    mutate_manifest=break_action_reference,
+                )
+                self.assertIn(
+                    f"mobile lifecycle lifecycle-ios references unknown "
+                    f"{label} action-missing",
+                    diagnostics,
+                )
 
     def test_mobile_artifact_must_reference_the_declared_application(self):
         def break_application_reference(manifest):
@@ -1671,6 +1904,7 @@ class MobileCaseContractTests(unittest.TestCase):
                     "authorize-production-mobile-observation",
                 ],
                 "required_classifications": ["authorization-required"],
+                "required_target_tier": "production",
                 "forbid_execution": True,
             },
             "mobile-capability-unavailable": {
@@ -1751,6 +1985,15 @@ class MobileCaseContractTests(unittest.TestCase):
                     self._case(case_id)["prompt"].endswith(suffix),
                     case_id,
                 )
+
+    def test_bootstrap_authorized_prompt_requires_authoritative_record(self):
+        prompt = self._case("mobile-bootstrap-authorized")["prompt"]
+        self.assertIn(
+            "Record authorization-mobile-bootstrap in authorizations with "
+            "status approved, capability mobile-repository-bootstrap, and "
+            "target_reference bound to the selected mobile target.",
+            prompt,
+        )
 
     def test_allowed_mobile_changes_reject_unrelated_workspace_edits(self):
         with tempfile.TemporaryDirectory() as tmp:

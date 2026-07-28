@@ -3,7 +3,7 @@
   "entry_skill": "e2e-mobile",
   "surface": "mobile",
   "mode": "generate",
-  "prompt": "Generate tests after explicit bootstrap authorization with bounded dependency changes. Persist authorization-mobile-bootstrap in the Appium driver record. Use authorization-mobile-bootstrap, change only bounded Appium test dependencies/configuration, and do not execute.",
+  "prompt": "Generate tests after explicit bootstrap authorization with bounded dependency changes. Record authorization-mobile-bootstrap in authorizations with status approved, capability mobile-repository-bootstrap, and target_reference bound to the selected mobile target. Persist authorization-mobile-bootstrap in the Appium driver record. Use authorization-mobile-bootstrap, change only bounded Appium test dependencies/configuration, and do not execute.",
   "fixture": "mobile-contract",
   "expect": {
     "manifest_status": "generated-unverified",

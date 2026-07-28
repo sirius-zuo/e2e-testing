@@ -10,6 +10,7 @@
     "required_evidence_ids": ["evidence-production-authorization"],
     "required_action_capabilities": ["authorize-production-mobile-observation"],
     "required_classifications": ["authorization-required"],
+    "required_target_tier": "production",
     "forbid_execution": true
   },
   "autonomy": {"mode": "explicit", "auto_repair": false}
