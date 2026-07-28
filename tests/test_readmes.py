@@ -73,6 +73,42 @@ class ReadmeContractTests(unittest.TestCase):
         ):
             self.assertIn(required, text)
 
+    def test_project_readme_publishes_mobile_surface(self):
+        text = (ROOT / "README.md").read_text()
+        for required in (
+            "e2e-mobile",
+            "Appium",
+            "Maestro",
+            "installed iOS and Android",
+            "skills/e2e-mobile/SKILL.md",
+        ):
+            self.assertIn(required, text)
+
+    def test_roadmap_records_atomic_v3_mobile_delivery(self):
+        roadmap = (ROOT / "docs/roadmap.md").read_text()
+        self.assertIn("V3 — Mobile UI", roadmap)
+        self.assertIn("one atomic `e2e-mobile`", roadmap)
+        self.assertIn("Appium", roadmap)
+        self.assertIn("Maestro", roadmap)
+        self.assertIn("iOS simulator", roadmap)
+        self.assertIn("Android emulator", roadmap)
+        self.assertIn("real or remote", roadmap)
+
+    def test_mobile_platform_acceptance_is_explicitly_authorized(self):
+        text = (ROOT / "evals/MOBILE_PLATFORM_ACCEPTANCE.md").read_text()
+        for required in (
+            "explicit reviewer authorization",
+            "Appium",
+            "Maestro",
+            "iOS simulator",
+            "Android emulator",
+            "real or remote",
+            "selected check IDs",
+            "cleanup evidence",
+            "fixture evidence cannot",
+        ):
+            self.assertIn(required, text)
+
 
 if __name__ == "__main__":
     unittest.main()
