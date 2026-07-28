@@ -12,7 +12,7 @@
   "test-support/http-client.js": "278c9c380c65dc9ce6509dae76c96432a4ae2df770b4cdb85e12fb2d9d2ff9ca",
   "test-support/queue-client.js": "d56d5a56f669e7fc1e71148c00b6c6e2c469e092a1f456e621ae78a1097e1396",
   "test-support/stream-client.js": "6ecf1f07adbf6b1c00125144b9a07a7bf4c95f1cb8e38de2414a862d41d7b3b1",
-  "test-support/websocket-client.js": "ed11614e84ff7ce5b4ab819b99f57b3f949f8c1e1d77c39c0ca258584e35909e",
+  "test-support/websocket-client.js": "e14bce1239787148d148553cfc21f9ca9e9ffbf7f89f0195860c206d4cd0f626",
   "src/server.js": "add1e12555de6c7c88a807f22b9bcd1ec68d71aa164ccc86e96aa0bb1d54d1a0",
   "src/ws-frames.js": "a4aee045fc64ee03341605d61bd9a365496da9b77dd144439a1fefcd9bc3819d",
   "src/grpc-codec.js": "df32553c9f17b23089ab5057f9c2685be285bca5333d15eddafe6eec193dae24"

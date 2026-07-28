@@ -23,11 +23,13 @@ export async function exchangeWebSocket(sequence, options = {}) {
   return new Promise((resolve) => {
     const messages = [];
     let settled = false;
+    let upgradedSocket = null;
 
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (upgradedSocket) upgradedSocket.destroy();
       resolve(result);
     };
 
@@ -61,6 +63,10 @@ export async function exchangeWebSocket(sequence, options = {}) {
         finish({ messages: [], status: 400 });
         return;
       }
+
+      // Ownership of the live TCP socket transfers to us here; req.destroy()
+      // in the timeout path above does not close it, so track it separately.
+      upgradedSocket = socket;
 
       let buffer = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
       socket.on("data", (chunk) => {
