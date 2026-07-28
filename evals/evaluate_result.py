@@ -688,7 +688,7 @@ def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], su
 
     # Validate execution evidence protocols match selected units
     for item in evidence:
-        if not isinstance(item, dict) or item.get("id") == "cap-1":
+        if not isinstance(item, dict):
             continue
         env = item.get("execution_environment")
         if not isinstance(env, dict):
