@@ -764,10 +764,11 @@ def _mobile_extension_records(
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
     list[dict[str, Any]],
+    list[str],
 ]:
     data = extension.get("data")
     if not isinstance(data, dict):
-        return None, {}, {}, {}, []
+        return None, {}, {}, {}, [], []
     application = data.get("application")
     application_id = (
         application.get("id")
@@ -775,25 +776,43 @@ def _mobile_extension_records(
         else None
     )
 
-    def index_records(name: str) -> dict[str, dict[str, Any]]:
+    duplicate_ids: list[str] = []
+
+    def index_records(name: str, label: str) -> dict[str, dict[str, Any]]:
         records = data.get(name)
         if not isinstance(records, list):
             return {}
-        return {
-            item["id"]: item
-            for item in records
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
+        indexed: dict[str, dict[str, Any]] = {}
+        for item in records:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                continue
+            record_id = item["id"]
+            if record_id in indexed:
+                duplicate_ids.append(f"duplicate mobile {label} id: {record_id}")
+                continue
+            indexed[record_id] = item
+        return indexed
 
     profiles = data.get("lifecycle_profiles")
+    lifecycle_profiles = [
+        item for item in profiles if isinstance(item, dict)
+    ] if isinstance(profiles, list) else []
+    profile_ids: set[str] = set()
+    for profile in lifecycle_profiles:
+        profile_id = profile.get("id")
+        if not isinstance(profile_id, str):
+            continue
+        if profile_id in profile_ids:
+            duplicate_ids.append(f"duplicate mobile lifecycle id: {profile_id}")
+            continue
+        profile_ids.add(profile_id)
     return (
         application_id,
-        index_records("drivers"),
-        index_records("targets"),
-        index_records("artifacts"),
-        [item for item in profiles if isinstance(item, dict)]
-        if isinstance(profiles, list)
-        else [],
+        index_records("drivers", "driver"),
+        index_records("targets", "target"),
+        index_records("artifacts", "artifact"),
+        lifecycle_profiles,
+        duplicate_ids,
     )
 
 
@@ -851,7 +870,11 @@ def _check_mobile_contract(
             targets,
             artifacts,
             lifecycle_profiles,
+            duplicate_ids,
         ) = _mobile_extension_records(bound_extensions[0])
+        if duplicate_ids:
+            diagnostics.extend(duplicate_ids)
+            return diagnostics
         mobile_unit_ids = {
             item["id"]
             for item in mobile_units
@@ -909,6 +932,11 @@ def _check_mobile_contract(
                     diagnostics.append(
                         f"mobile lifecycle {profile_id} upgrade requires "
                         "one prior and one candidate artifact"
+                    )
+                elif roles != ["prior", "candidate"]:
+                    diagnostics.append(
+                        f"mobile lifecycle {profile_id} upgrade requires "
+                        "artifacts ordered prior then candidate"
                     )
 
             if (

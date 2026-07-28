@@ -378,6 +378,88 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_upgrade_requires_prior_artifact_before_candidate(self):
+        def reverse_upgrade_artifacts(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["artifacts"].append({
+                **mobile["artifacts"][0],
+                "id": "artifact-prior-ios",
+                "role": "prior",
+                "artifact_ref": "prior-ios",
+                "build_ref": "prior-1",
+            })
+            profile = mobile["lifecycle_profiles"][0]
+            profile.update(
+                artifact_ids=["artifact-candidate-ios", "artifact-prior-ios"],
+                upgrade=True,
+                install_policy="upgrade",
+            )
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=reverse_upgrade_artifacts,
+        )
+        self.assertIn(
+            "mobile lifecycle lifecycle-ios upgrade requires artifacts ordered prior then candidate",
+            diagnostics,
+        )
+
+    def test_mobile_extension_duplicate_driver_ids_are_rejected(self):
+        def duplicate_driver(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["drivers"].append(dict(mobile["drivers"][0]))
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=duplicate_driver,
+        )
+        self.assertIn("duplicate mobile driver id: driver-appium", diagnostics)
+
+    def test_mobile_extension_duplicate_target_ids_are_rejected(self):
+        def duplicate_target(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["targets"].append(dict(mobile["targets"][0]))
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=duplicate_target,
+        )
+        self.assertIn("duplicate mobile target id: target-ios-sim", diagnostics)
+
+    def test_mobile_extension_duplicate_artifact_ids_are_rejected(self):
+        def duplicate_artifact(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["artifacts"].append(dict(mobile["artifacts"][0]))
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=duplicate_artifact,
+        )
+        self.assertIn("duplicate mobile artifact id: artifact-candidate-ios", diagnostics)
+
+    def test_mobile_extension_duplicate_lifecycle_ids_are_rejected(self):
+        def duplicate_lifecycle(manifest):
+            mobile = manifest["extensions"][0]["data"]
+            mobile["lifecycle_profiles"].append(
+                dict(mobile["lifecycle_profiles"][0])
+            )
+
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect={"manifest_status": "verified", "allow_fixture_evidence": True},
+            mutate_manifest=duplicate_lifecycle,
+        )
+        self.assertIn("duplicate mobile lifecycle id: lifecycle-ios", diagnostics)
+
     def test_virtual_snapshot_requires_a_disposable_virtual_target(self):
         def make_real_snapshot(manifest):
             target = manifest["extensions"][0]["data"]["targets"][0]
