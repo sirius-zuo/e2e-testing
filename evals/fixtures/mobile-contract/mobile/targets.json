@@ -1,0 +1,6 @@
+[
+  {"id": "appium-ios-sim", "driver": "appium", "platform": "ios", "kind": "simulator", "disposable": true},
+  {"id": "appium-android-emu", "driver": "appium", "platform": "android", "kind": "emulator", "disposable": true},
+  {"id": "maestro-ios-sim", "driver": "maestro", "platform": "ios", "kind": "simulator", "disposable": true},
+  {"id": "maestro-android-emu", "driver": "maestro", "platform": "android", "kind": "emulator", "disposable": true}
+]

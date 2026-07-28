@@ -637,7 +637,16 @@ EXECUTION_ENVIRONMENT_FIELDS = {
         "protocol", "client", "client_version", "os_platform", "runtime",
         "application_build_ref", "target_reference", "target_tier",
     },
+    "mobile": {
+        "driver", "driver_version", "platform", "os_version", "target_kind",
+        "application_build_ref", "target_reference", "target_tier",
+        "evidence_origin",
+    },
 }
+
+MOBILE_DRIVERS = {"appium", "maestro"}
+MOBILE_PLATFORMS = {"ios", "android"}
+MOBILE_TARGET_KINDS = {"simulator", "emulator", "real", "remote"}
 
 SERVICE_PROTOCOLS = {"http", "graphql", "grpc", "websocket", "queue", "stream"}
 DATABASE_CAPABILITIES = {"database-setup", "database-cleanup", "database-diagnostics"}
@@ -747,6 +756,122 @@ def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], su
     return diagnostics
 
 
+def _check_mobile_contract(
+    manifest: dict[str, Any],
+    expect: dict[str, Any],
+    surface: str,
+) -> list[str]:
+    diagnostics: list[str] = []
+    units = manifest.get("execution_units", [])
+    evidence = manifest.get("evidence", [])
+    actions = manifest.get("actions", [])
+    mobile_units = [
+        item for item in units
+        if isinstance(item, dict) and item.get("surface") == "mobile"
+    ]
+    if not mobile_units:
+        return diagnostics
+
+    extensions_by_id = {
+        item["id"]: item
+        for item in manifest.get("extensions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    bound_ids: set[str] = set()
+    for unit in mobile_units:
+        extension_id = unit.get("extension_id")
+        extension = extensions_by_id.get(extension_id)
+        if (
+            not isinstance(extension, dict)
+            or extension.get("namespace") != "e2e.mobile"
+            or extension.get("version") != "1.0"
+        ):
+            diagnostics.append(
+                f"execution_unit {unit.get('id')} does not reference "
+                "the e2e.mobile@1.0 extension"
+            )
+            continue
+        bound_ids.add(extension_id)
+    if len(bound_ids) > 1:
+        diagnostics.append(
+            "mobile execution units must share a single e2e.mobile extension"
+        )
+
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        environment = item.get("execution_environment")
+        if not isinstance(environment, dict):
+            continue
+        if environment.get("driver") not in MOBILE_DRIVERS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid driver: "
+                f"{environment.get('driver')}"
+            )
+        if environment.get("platform") not in MOBILE_PLATFORMS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid platform: "
+                f"{environment.get('platform')}"
+            )
+        if environment.get("target_kind") not in MOBILE_TARGET_KINDS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid target kind: "
+                f"{environment.get('target_kind')}"
+            )
+        if (
+            environment.get("evidence_origin") == "fixture"
+            and not expect.get("allow_fixture_evidence", False)
+        ):
+            diagnostics.append(
+                "fixture evidence cannot satisfy live mobile acceptance"
+            )
+        if environment.get("target_tier") == "production":
+            if (
+                environment.get("external_effect_performed") is True
+                or environment.get("backend_mutation_performed") is True
+                or environment.get("permission_external_effect") is True
+            ):
+                diagnostics.append(
+                    "production external effects are not allowed "
+                    "in mobile verification"
+                )
+
+    cleanup_actions = [
+        item for item in actions
+        if isinstance(item, dict)
+        and item.get("capability") == "mobile-cleanup"
+    ]
+    if _run_value(manifest, "status") == "verified" and not cleanup_actions:
+        diagnostics.append(
+            "cleanup incomplete: verified mobile run lacks mobile-cleanup action"
+        )
+    for action in cleanup_actions:
+        successful = any(
+            isinstance(item, dict)
+            and item.get("cleanup_action_id") == action.get("id")
+            and item.get("cleanup_successful") is True
+            for item in evidence
+        )
+        if not successful and _run_value(manifest, "status") == "verified":
+            diagnostics.append(
+                "cleanup incomplete: mobile-cleanup action lacks successful evidence"
+            )
+        if (
+            not successful
+            and _run_value(manifest, "status") == "blocked"
+            and not any(
+                isinstance(item, dict)
+                and item.get("cleanup_action_id") == action.get("id")
+                and item.get("cleanup_successful") is False
+                for item in evidence
+            )
+        ):
+            diagnostics.append(
+                "blocked cleanup outcome requires explicit failed cleanup evidence"
+            )
+    return diagnostics
+
+
 def evaluate(
     case_path: str | Path,
     workspace: str | Path,
@@ -806,6 +931,8 @@ def evaluate(
     diagnostics.extend(_check_status_evidence(manifest, expect, surface))
     if surface == "service":
         diagnostics.extend(_check_service_contract(manifest, expect, surface))
+    if surface == "mobile":
+        diagnostics.extend(_check_mobile_contract(manifest, expect, surface))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))

@@ -1,0 +1,8 @@
+{
+  "kind": "cross-platform",
+  "framework": "react-native",
+  "app_id": "app-cross-platform",
+  "bundle_id": "com.example.cross",
+  "package_id": "com.example.cross",
+  "supported_boundary": "installed-app"
+}

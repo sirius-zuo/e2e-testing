@@ -1,0 +1,6 @@
+{
+  "kind": "native-android",
+  "app_id": "app-native-android",
+  "package_id": "com.example.nativeandroid",
+  "supported_boundary": "installed-app"
+}

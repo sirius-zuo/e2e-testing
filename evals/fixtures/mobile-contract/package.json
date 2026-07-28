@@ -1,0 +1,8 @@
+{
+  "name": "mobile-contract-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/fixture-contract.test.js"
+  }
+}

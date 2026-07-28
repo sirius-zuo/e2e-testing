@@ -1,0 +1,7 @@
+{
+  "id": "artifact-candidate-ios",
+  "platform": "ios",
+  "role": "candidate",
+  "app_id": "app-mobile-contract",
+  "build_ref": "candidate-1"
+}

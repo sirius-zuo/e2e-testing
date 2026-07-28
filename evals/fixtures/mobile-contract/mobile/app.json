@@ -1,0 +1,11 @@
+{
+  "id": "app-mobile-contract",
+  "framework": "react-native",
+  "ios_bundle_id": "com.example.mobilecontract",
+  "android_package_id": "com.example.mobilecontract",
+  "entry_points": ["native", "embedded-webview"],
+  "build_commands": {
+    "ios": "fixture-build-ios",
+    "android": "fixture-build-android"
+  }
+}
