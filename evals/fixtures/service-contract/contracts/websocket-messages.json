@@ -1,0 +1,25 @@
+{
+  "title": "WebSocket Messages Contract",
+  "description": "Message contract for WebSocket connections in the service fixture",
+  "messages": {
+    "subscribe": {
+      "type": "object",
+      "required": ["type", "orderId"],
+      "properties": {
+        "type": { "type": "string", "const": "subscribe" },
+        "orderId": { "type": "string" }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "required": ["type", "correlationId", "data"],
+      "properties": {
+        "type": { "type": "string", "const": "notification" },
+        "correlationId": { "type": "string" },
+        "data": { "type": "object" }
+      }
+    }
+  },
+  "subprotocols": ["e2e-v1"],
+  "timeout": 5000
+}

@@ -58,20 +58,22 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("`actions`", orchestrator_text)
         self.assertNotIn("next_actions", orchestrator_text)
         self.assertIn(
-            "read-only browser-framework discovery before accessing or creating `.e2e/` state",
+            "read-only interface discovery before accessing or creating `.e2e/` state",
             orchestrator_text,
         )
         self.assertLess(
-            orchestrator_text.index("read-only browser-framework discovery"),
+            orchestrator_text.index("read-only interface discovery"),
             orchestrator_text.index("Otherwise validate and resume Protocol 2"),
         )
         self.assertIn("Protocol 2", orchestrator_text)
         self.assertIn("`e2e-web`", orchestrator_text)
+        self.assertIn("`e2e-service`", orchestrator_text)
+        self.assertIn("needs-clarification", orchestrator_text)
+        self.assertIn("one primary surface", orchestrator_text)
         self.assertIn("`capability-unavailable`", orchestrator_text)
         self.assertIn("`--replace-protocol-1`", orchestrator_text)
         self.assertNotIn("e2e-web-playwright", orchestrator_text)
         self.assertNotIn("unsupported-framework", orchestrator_text)
-        self.assertNotIn("service", orchestrator_text)
         self.assertNotIn("mobile", orchestrator_text)
         self.assertNotIn("desktop", orchestrator_text)
         self.assertNotIn("You are a senior", orchestrator_text)
@@ -123,6 +125,24 @@ class SkillContractTests(unittest.TestCase):
         )
         self.assertIn("python3 scripts/e2e_protocol.py validate PROJECT/.e2e/manifest.json", protocol)
         self.assertNotIn("skills/e2e-testing/scripts/e2e_protocol.py", protocol)
+
+    def test_orchestrator_routes_service_and_database_support(self):
+        orchestrator_text = (ROOT / "skills/e2e-testing/SKILL.md").read_text()
+        self.assertIn("`e2e-service`", orchestrator_text)
+        self.assertIn("one primary surface", orchestrator_text)
+        self.assertIn("needs-clarification", orchestrator_text)
+        self.assertIn("database-support.md", orchestrator_text)
+        database_support = (ROOT / "skills/e2e-testing/references/database-support.md").read_text()
+        for capability in ("database-setup", "database-cleanup", "database-diagnostics"):
+            self.assertIn(capability, database_support)
+        self.assertIn("acceptance oracle", database_support)
+        self.assertIn("never claims `e2e.support` as a namespace", database_support)
+        # Database support should not be in the service extension schema
+        service_schema = json.loads(
+            (ROOT / "skills/e2e-service/references/extensions/service.schema.json").read_text()
+        )
+        schema_text = json.dumps(service_schema)
+        self.assertNotIn("database", schema_text.lower())
 
     def test_web_contract_and_orchestrator_boundary(self):
         web = ROOT / "skills/e2e-web/SKILL.md"
@@ -304,6 +324,26 @@ class SkillContractTests(unittest.TestCase):
             self.assertNotIn(legacy_name, text, path.relative_to(ROOT))
             self.assertNotIn("Protocol 1.0 is the manifest contract", text, path.relative_to(ROOT))
 
+    def test_service_skill_contract(self):
+        service_text = (ROOT / "skills/e2e-service/SKILL.md").read_text()
+        self.assertIn("name: e2e-service", service_text)
+        self.assertIn("default to generate mode", service_text)
+        self.assertIn("one logical system", service_text)
+        self.assertIn("confirmed supported external boundary", service_text)
+        self.assertIn("repository-native", service_text)
+        self.assertIn("generated-unverified", service_text)
+        repair = (ROOT / "skills/e2e-service/references/repair-guardrails.md").read_text()
+        self.assertIn("Never modify application code", repair)
+        for module in ("HTTP", "GraphQL", "gRPC", "WebSocket", "queue", "stream"):
+            self.assertIn(module, service_text)
+        for forbidden in ("e2e-http", "e2e-grpc", "database surface", "test_ids"):
+            self.assertNotIn(forbidden, service_text)
+        refs = (ROOT / "skills/e2e-service/references").iterdir()
+        for ref in ("workflow.md", "protocol.md", "safety.md", "failure-classification.md",
+                    "repair-guardrails.md", "http.md", "graphql.md", "grpc.md",
+                    "websocket.md", "queue.md", "stream.md"):
+            self.assertTrue((ROOT / "skills/e2e-service/references" / ref).exists(), ref)
+
     def test_active_bundles_publish_protocol_2_and_web_extension(self):
         for skill in ("e2e-testing", "e2e-web"):
             root = ROOT / "skills" / skill
@@ -311,6 +351,13 @@ class SkillContractTests(unittest.TestCase):
             web = json.loads((root / "references/extensions/web.schema.json").read_text())
             self.assertEqual(schema["properties"]["protocol_version"]["const"], "2.0")
             self.assertEqual(web["$id"], "urn:e2e-testing:extension:web:1.0")
+        service = ROOT / "skills" / "e2e-service"
+        self.assertTrue((service / "SKILL.md").exists())
+        self.assertTrue((service / "references/manifest.schema.json").exists())
+        service_schema = json.loads((service / "references/manifest.schema.json").read_text())
+        self.assertEqual(service_schema["properties"]["protocol_version"]["const"], "2.0")
+        service_ext = json.loads((service / "references/extensions/service.schema.json").read_text())
+        self.assertEqual(service_ext["$id"], "urn:e2e-testing:extension:service:1.0")
 
     def test_protocol_kernel_is_surface_neutral_and_portable(self):
         runtime = (ROOT / "protocol/v2/e2e_protocol.py").read_text()
@@ -320,7 +367,7 @@ class SkillContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, helper)
 
     def test_active_bundles_publish_registered_web_catalogs(self):
-        for skill in ("e2e-testing", "e2e-web"):
+        for skill in ("e2e-web",):
             root = ROOT / "skills" / skill
             catalog = json.loads((root / "references/extensions/catalog.json").read_text())
             self.assertEqual(
@@ -333,6 +380,19 @@ class SkillContractTests(unittest.TestCase):
                 "dialect": "draft2020-12-subset-1", "schema": "web.schema.json",
             }])
             self.assertTrue((root / "scripts/extension_catalog.py").is_file())
+        orchestrator = ROOT / "skills" / "e2e-testing"
+        orchestrator_catalog = json.loads((orchestrator / "references/extensions/catalog.json").read_text())
+        self.assertEqual(
+            {entry["namespace"] for entry in orchestrator_catalog["extensions"]},
+            {"e2e.web", "e2e.service"},
+        )
+        service = ROOT / "skills" / "e2e-service"
+        service_catalog = json.loads((service / "references/extensions/catalog.json").read_text())
+        self.assertEqual(
+            {entry["namespace"] for entry in service_catalog["extensions"]},
+            {"e2e.service"},
+        )
+        self.assertTrue((service / "scripts/extension_catalog.py").is_file())
 
 
 if __name__ == "__main__":

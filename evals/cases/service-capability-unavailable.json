@@ -1,0 +1,15 @@
+{
+  "id": "service-capability-unavailable",
+  "entry_skill": "e2e-service",
+  "surface": "service",
+  "mode": "generate",
+  "prompt": "Generate E2E coverage for a repository that has HTTP and GraphQL boundaries confirmed but no gRPC client. Record capability-unavailable with read_only=true for the unavailable gRPC adapter.",
+  "fixture": "service-contract",
+  "expect": {
+    "manifest_status": "capability-unavailable"
+  },
+  "autonomy": {
+    "mode": "explicit",
+    "auto_repair": false
+  }
+}

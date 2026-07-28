@@ -1,0 +1,17 @@
+{
+  "title": "Queue Contract",
+  "description": "Queue message contract for the service fixture",
+  "destination": "e2e-orders",
+  "role": "consume",
+  "delivery_semantics": "at-least-once",
+  "message": {
+    "type": "object",
+    "required": ["correlationId", "type"],
+    "properties": {
+      "correlationId": { "type": "string" },
+      "type": { "type": "string", "enum": ["order.accepted", "order.rejected", "order.shipped"] },
+      "attributes": { "type": "object" }
+    }
+  },
+  "acknowledgement_policy": "manual"
+}

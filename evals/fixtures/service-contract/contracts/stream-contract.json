@@ -1,0 +1,17 @@
+{
+  "title": "Stream Contract",
+  "description": "Stream event contract for the service fixture",
+  "channel": "e2e-events",
+  "role": "consume",
+  "event": {
+    "type": "object",
+    "required": ["correlationId", "type"],
+    "properties": {
+      "correlationId": { "type": "string" },
+      "type": { "type": "string", "enum": ["order.accepted", "order.rejected", "order.shipped"] },
+      "data": { "type": "object" }
+    }
+  },
+  "cursor_policy": "auto",
+  "ordering": "key-partition"
+}

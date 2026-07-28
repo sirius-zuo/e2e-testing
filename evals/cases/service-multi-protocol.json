@@ -1,0 +1,23 @@
+{
+  "id": "service-multi-protocol",
+  "entry_skill": "e2e-testing",
+  "surface": "service",
+  "mode": "verify",
+  "prompt": "Verify all six protocol modules (HTTP, GraphQL, gRPC, WebSocket, queue, stream) against the service-contract fixture. Each module requires its own execution unit with surface=service. All required checks must have outcomes.",
+  "fixture": "service-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "required_check_ids": [
+      "check-http",
+      "check-graphql",
+      "check-grpc",
+      "check-websocket",
+      "check-queue",
+      "check-stream"
+    ]
+  },
+  "autonomy": {
+    "mode": "explicit",
+    "auto_repair": false
+  }
+}

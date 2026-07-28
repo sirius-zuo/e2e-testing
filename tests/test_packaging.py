@@ -6,10 +6,11 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = [ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web"]
+TARGETS = [ROOT / "skills/e2e-testing", ROOT / "skills/e2e-web", ROOT / "skills/e2e-service"]
 EXPECTED_NAMESPACES = {
-    "e2e-testing": {"e2e.web"},
+    "e2e-testing": {"e2e.web", "e2e.service"},
     "e2e-web": {"e2e.web"},
+    "e2e-service": {"e2e.service"},
 }
 
 
@@ -42,11 +43,18 @@ class PackagingTests(unittest.TestCase):
             sys.modules[spec.name] = module
             spec.loader.exec_module(module)
             manifest = module.new_manifest("/workspace/app", timestamp="2026-07-24T00:00:00Z")
-            manifest["extensions"] = [{
-                "id": "extension-web", "namespace": "e2e.web", "version": "1.0",
-                "owner": "e2e-web", "data": {},
-            }]
-            self.assertIn("extension data missing required property: driver", module.validate_manifest(manifest))
+            if target.name == "e2e-service":
+                manifest["extensions"] = [{
+                    "id": "extension-service", "namespace": "e2e.service", "version": "1.0",
+                    "owner": "e2e-service", "data": {},
+                }]
+                self.assertIn("extension data missing required property: http", module.validate_manifest(manifest))
+            else:
+                manifest["extensions"] = [{
+                    "id": "extension-web", "namespace": "e2e.web", "version": "1.0",
+                    "owner": "e2e-web", "data": {},
+                }]
+                self.assertIn("extension data missing required property: driver", module.validate_manifest(manifest))
 
     def test_each_bundled_utility_needs_no_site_packages(self):
         for target in TARGETS:

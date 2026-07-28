@@ -74,7 +74,21 @@ inventing a selector, an expected response, or a data value.
 
 ## Routing
 
-Routing is framework-neutral. First determine whether a browser E2E driver
+### Surface discovery
+
+Identify the surface before routing:
+- Confirmed web boundary only → route to `e2e-web`.
+- Confirmed service boundary (HTTP, GraphQL, gRPC, WebSocket, queue, or stream) → route to
+  `e2e-service`.
+- Both web and service requested or required → return `needs-clarification`. Multi-system and
+  multi-surface composition are excluded in V2.
+- No confirmed boundary → return `needs-clarification`.
+
+One primary surface per run. Persist the route before delegation.
+
+### Browser framework gate
+
+Routing is framework-neutral for web. First determine whether a browser E2E driver
 is present from package setup, existing suite structure, and repository
 instructions. Do not alter dependencies, configuration, or test infrastructure
 as part of this decision.
@@ -86,13 +100,26 @@ as part of this decision.
 | No browser E2E driver is present | `e2e-web` | hand off to `e2e-web` |
 | Driver evidence is ambiguous but does not establish an alternate driver | `needs-clarification` | ask without infrastructure change |
 
-Direct routing is appropriate when the host can invoke `e2e-web` by name.
+Direct routing is appropriate when the host can invoke the capability by name.
 Automated routing is appropriate only when the host has an authorized capability
 for delegation. After the framework gate passes, persist the action first,
 including its inputs, `run.revision`, target journey IDs, and expected resume
 condition. For an unavailable capability, persist the durable manifest outcome
 only after the read-only gate; it is not a license to bootstrap, migrate, or
 mutate test infrastructure.
+
+### Service boundary gate
+
+When service boundaries are confirmed:
+- Route complete work to `e2e-service` only.
+- The same framework gate logic applies but uses service boundary evidence instead of browser drivers.
+
+### Database support
+
+- Use `database-setup`, `database-cleanup`, and `database-diagnostics` capabilities for execution
+  support. See [database-support.md](database-support.md) for rules.
+- Database actions use existing core records; they are never an acceptance oracle.
+- Cleanup failure blocks run completion without rewriting check outcomes.
 
 ## Actions and handoffs
 

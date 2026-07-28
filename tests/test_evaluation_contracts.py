@@ -154,18 +154,24 @@ def _repair_attempt() -> dict:
 class FixtureContractTests(unittest.TestCase):
     def test_cases_have_required_fields_and_existing_fixtures(self):
         case_paths = sorted(CASES.glob("*.json"))
-        self.assertEqual(len(case_paths), 10)
-        self.assertEqual({path.stem for path in case_paths}, {
+        self.assertEqual(len(case_paths), 17)
+        original_cases = {
             "greenfield-source", "live-assisted-generation", "existing-playwright",
             "unsupported-cypress", "conflicting-evidence", "verify-pass",
             "repair-test-defect", "product-defect-handoff", "missing-credentials", "auto-budget",
-        })
+        }
+        service_cases = {
+            "service-generate-all", "service-verify-all", "service-multi-protocol",
+            "service-production-refusal", "service-capability-unavailable",
+            "service-product-defect", "service-database-support",
+        }
+        self.assertEqual({path.stem for path in case_paths}, original_cases | service_cases)
         for path in case_paths:
             with self.subTest(case=path.stem):
                 case = json.loads(path.read_text())
                 self.assertTrue(REQUIRED_CASE_FIELDS <= set(case))
                 self.assertTrue((FIXTURES / case["fixture"]).is_dir())
-                self.assertEqual(case["entry_skill"], "e2e-testing")
+                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service"})
                 self.assertNotIn("e2e-web-playwright", json.dumps(case))
 
     def test_verified_case_expectations_name_the_execution_evidence_to_bind(self):
@@ -248,7 +254,7 @@ class EvaluatorTests(unittest.TestCase):
         return evaluate_result._check_status_evidence(manifest, {
             "required_journey_ids": ["journey-checkout"],
             "required_execution_evidence_ids": ["evidence-verification"],
-        })
+        }, "web")
 
     def test_detects_forbidden_preserved_file_change(self):
         self._write_manifest()
@@ -330,7 +336,7 @@ class EvaluatorTests(unittest.TestCase):
         target.mkdir()
         (target / "manifest.json").write_text(json.dumps(manifest))
         diagnostics = evaluate(CASES / "verify-pass.json", workspace)
-        self.assertIn("verified status requires successful selected-test execution evidence", diagnostics)
+        self.assertIn("verified status requires successful selected-check execution evidence", diagnostics)
 
     def test_verified_case_rejects_required_label_with_unrelated_successful_execution(self):
         workspace = Path(self.tmp.name) / "verify-unrelated-success"
@@ -750,7 +756,7 @@ class EvaluatorTests(unittest.TestCase):
         )
         self.assertEqual(evidence["check_ids"], ["check-checkout"])
         self.assertEqual(evidence["outcomes"][0]["check_id"], "check-checkout")
-        self.assertTrue(evaluate_result._is_execution_evidence(evidence, {"check-checkout"}))
+        self.assertTrue(evaluate_result._is_execution_evidence(evidence, {"check-checkout"}, "web"))
 
 
 class HostHarnessTests(unittest.TestCase):

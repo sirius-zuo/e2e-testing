@@ -1,0 +1,19 @@
+{
+  "id": "service-database-support",
+  "entry_skill": "e2e-testing",
+  "surface": "service",
+  "mode": "verify",
+  "prompt": "Run E2E verification with database support. Use database-setup before execution, database-cleanup after. Record database-diagnostics only after an external failure. Database rows must not substitute for execution evidence.",
+  "fixture": "service-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "required_action_ids": [
+      "action-db-setup",
+      "action-db-cleanup"
+    ]
+  },
+  "autonomy": {
+    "mode": "explicit",
+    "auto_repair": false
+  }
+}

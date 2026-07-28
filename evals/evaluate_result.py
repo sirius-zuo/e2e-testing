@@ -200,8 +200,10 @@ def _check_traceability(manifest: dict[str, Any], expect: dict[str, Any]) -> lis
     ]
 
 
-def _is_execution_evidence(item: Any, check_ids: set[str]) -> bool:
+def _is_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool:
     if not isinstance(item, dict):
+        return False
+    if item.get("support_only") is True:
         return False
     command = item.get("command")
     if not isinstance(command, str) or not command.strip():
@@ -220,19 +222,16 @@ def _is_execution_evidence(item: Any, check_ids: set[str]) -> bool:
         for outcome in outcomes
         if isinstance(outcome, dict) and outcome.get("status") == "passed"
     }
-    required_environment = {
-        "browser_project", "os_platform", "runtime", "application_build_ref", "target_reference", "target_tier",
-    }
     return (
         set(selected) <= outcome_ids
-        and isinstance(environment, dict)
-        and required_environment <= set(environment)
-        and all(isinstance(environment[key], str) and environment[key] for key in required_environment)
+        and _execution_environment_is_valid(environment, surface)
     )
 
 
-def _is_failed_execution_evidence(item: Any, check_ids: set[str]) -> bool:
+def _is_failed_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool:
     if not isinstance(item, dict):
+        return False
+    if item.get("support_only") is True:
         return False
     command = item.get("command")
     command_ref = item.get("command_ref")
@@ -257,14 +256,9 @@ def _is_failed_execution_evidence(item: Any, check_ids: set[str]) -> bool:
         for outcome in outcomes
         if isinstance(outcome, dict) and outcome.get("status") == "failed"
     }
-    required_environment = {
-        "browser_project", "os_platform", "runtime", "application_build_ref", "target_reference", "target_tier",
-    }
     return (
         set(selected) <= failed_ids
-        and isinstance(environment, dict)
-        and required_environment <= set(environment)
-        and all(isinstance(environment[key], str) and environment[key] for key in required_environment)
+        and _execution_environment_is_valid(environment, surface)
     )
 
 
@@ -299,7 +293,7 @@ def _linked_classification(
     )
 
 
-def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any], surface: str) -> list[str]:
     status = _run_value(manifest, "status")
     evidence = manifest.get("evidence")
     checks = manifest.get("checks")
@@ -310,9 +304,9 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
     check_ids = _ids(checks)
     diagnostics: list[str] = []
     if status == "verified":
-        successful_execution = any(_is_execution_evidence(item, check_ids) for item in evidence)
+        successful_execution = any(_is_execution_evidence(item, check_ids, surface) for item in evidence)
         if not successful_execution:
-            diagnostics.append("verified status requires successful selected-test execution evidence")
+            diagnostics.append("verified status requires successful selected-check execution evidence")
         scoped_journey_ids = set(expect.get("required_journey_ids", []))
         check_records = checks if isinstance(checks, list) else []
         scoped_check_ids = {
@@ -337,7 +331,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
         for required_id in expect.get("required_execution_evidence_ids", []):
             item = evidence_by_id.get(required_id)
             selected_ids = set(item.get("check_ids", [])) if isinstance(item, dict) else set()
-            if not _is_execution_evidence(item, check_ids) or not (
+            if not _is_execution_evidence(item, check_ids, surface) or not (
                 item.get("phase") == expected_phase and scoped_check_ids <= selected_ids
             ):
                 diagnostics.append(
@@ -357,16 +351,32 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
                     "required execution evidence is not bound to this phase, revision, and scoped tests: "
                     f"{required_id}"
                 )
-    if status == "capability-unavailable" and not any(
-        isinstance(item, dict)
-        and isinstance(item.get("framework"), str)
-        and item["framework"]
-        and isinstance(item.get("source_locations"), list)
-        and bool(item["source_locations"])
-        and item.get("read_only") is True
-        for item in evidence
-    ):
-        diagnostics.append("missing capability-unavailable framework detection evidence")
+    if status == "capability-unavailable":
+        if surface == "web":
+            valid_capability_evidence = any(
+                isinstance(item, dict)
+                and isinstance(item.get("framework"), str)
+                and item["framework"]
+                and isinstance(item.get("source_locations"), list)
+                and bool(item["source_locations"])
+                and item.get("read_only") is True
+                for item in evidence
+            )
+            if not valid_capability_evidence:
+                diagnostics.append("missing capability-unavailable framework detection evidence")
+        else:
+            valid_capability_evidence = any(
+                isinstance(item, dict)
+                and item.get("surface") == surface
+                and isinstance(item.get("adapter"), str)
+                and item["adapter"]
+                and isinstance(item.get("source_locations"), list)
+                and bool(item["source_locations"])
+                and item.get("read_only") is True
+                for item in evidence
+            )
+            if not valid_capability_evidence:
+                diagnostics.append("missing capability-unavailable adapter detection evidence")
     if status == "handoff-required":
         evidence_ids = _ids(evidence)
         failed_evidence_ids = {
@@ -374,7 +384,7 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any]) -> 
             for item in evidence
             if isinstance(item, dict)
             and isinstance(item.get("id"), str)
-            and _is_failed_execution_evidence(item, check_ids)
+            and _is_failed_execution_evidence(item, check_ids, surface)
         }
         classification_ids = {
             item["id"]
@@ -618,6 +628,125 @@ def _save_checkpoint(state_dir: Path, case: dict[str, Any], phase: str, manifest
     path.write_text(json.dumps(checkpoint, sort_keys=True), encoding="utf-8")
 
 
+EXECUTION_ENVIRONMENT_FIELDS = {
+    "web": {
+        "browser_project", "os_platform", "runtime", "application_build_ref",
+        "target_reference", "target_tier",
+    },
+    "service": {
+        "protocol", "client", "client_version", "os_platform", "runtime",
+        "application_build_ref", "target_reference", "target_tier",
+    },
+}
+
+SERVICE_PROTOCOLS = {"http", "graphql", "grpc", "websocket", "queue", "stream"}
+DATABASE_CAPABILITIES = {"database-setup", "database-cleanup", "database-diagnostics"}
+
+
+def _execution_environment_is_valid(environment: Any, surface: str) -> bool:
+    required = EXECUTION_ENVIRONMENT_FIELDS.get(surface)
+    return (
+        required is not None
+        and isinstance(environment, dict)
+        and required <= set(environment)
+        and all(isinstance(environment[key], str) and environment[key] for key in required)
+    )
+
+
+def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], surface: str) -> list[str]:
+    """Validate service module binding, production read-only behavior, and cleanup."""
+    diagnostics: list[str] = []
+    units = manifest.get("execution_units", [])
+    evidence = manifest.get("evidence", [])
+    actions = manifest.get("actions", [])
+    checks = manifest.get("checks", [])
+    check_ids = _ids(checks)
+    status = _run_value(manifest, "status")
+
+    # Require every service execution unit to use surface="service" and same service extension
+    service_units = [u for u in units if isinstance(u, dict) and u.get("surface") == "service"]
+    if not service_units:
+        return diagnostics  # No service units - not an error for this gate
+
+    # Require every service unit to bind the single shared e2e.service@1.0 extension
+    extensions_by_id = {
+        e["id"]: e for e in manifest.get("extensions", [])
+        if isinstance(e, dict) and isinstance(e.get("id"), str)
+    }
+    bound_extension_ids: set[str] = set()
+    for unit in service_units:
+        ext_id = unit.get("extension_id")
+        ext = extensions_by_id.get(ext_id) if isinstance(ext_id, str) else None
+        if ext is None or ext.get("namespace") != "e2e.service" or ext.get("version") != "1.0":
+            diagnostics.append(
+                f"execution_unit {unit.get('id')} does not reference the e2e.service@1.0 extension"
+            )
+            continue
+        bound_extension_ids.add(ext_id)
+    if len(bound_extension_ids) > 1:
+        diagnostics.append("service execution units must share a single e2e.service extension")
+
+    # Validate execution evidence protocols match selected units
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        env = item.get("execution_environment")
+        if not isinstance(env, dict):
+            continue
+        protocol = env.get("protocol")
+        if protocol and protocol not in SERVICE_PROTOCOLS:
+            diagnostics.append(f"execution evidence has invalid protocol: {protocol}")
+
+    # Require all required multi-protocol checks to be covered by genuine, passing,
+    # bound execution evidence (not merely by any outcome record, regardless of status).
+    required_check_ids = expect.get("required_check_ids", [])
+    if required_check_ids:
+        passed_check_ids: set[str] = set()
+        for item in evidence:
+            if _is_execution_evidence(item, check_ids, surface):
+                passed_check_ids.update(item.get("check_ids", []))
+        for check_id in required_check_ids:
+            if check_id not in passed_check_ids:
+                diagnostics.append(f"missing check ID: {check_id}")
+
+    # Production read-only checks (scoped to production-tier evidence only)
+    for item in evidence:
+        if not isinstance(item, dict) or not isinstance(item.get("execution_environment"), dict):
+            continue
+        env = item["execution_environment"]
+        if env.get("target_tier") != "production":
+            continue
+        if env.get("mutation_performed") is True:
+            diagnostics.append("production mutation is not allowed in service verification")
+        if env.get("acknowledged") is True:
+            diagnostics.append("acknowledged is not allowed in service verification")
+        if env.get("cursor_committed") is True:
+            diagnostics.append("cursor_committed is not allowed in service verification")
+
+    # Database support checks
+    for item in evidence:
+        if isinstance(item, dict) and item.get("support_only") is True:
+            if item.get("check_ids"):
+                diagnostics.append("database support evidence must not appear in check_ids")
+
+    # Cleanup action checks
+    cleanup_actions = [
+        a for a in actions
+        if isinstance(a, dict) and a.get("capability") == "database-cleanup"
+    ]
+    if cleanup_actions:
+        cleanup_evidence = [
+            e for e in evidence
+            if isinstance(e, dict)
+            and e.get("id") in [a.get("id") for a in cleanup_actions]
+            and e.get("cleanup_successful") is True
+        ]
+        if not cleanup_evidence:
+            diagnostics.append("cleanup incomplete: database-cleanup action without successful cleanup evidence")
+
+    return diagnostics
+
+
 def evaluate(
     case_path: str | Path,
     workspace: str | Path,
@@ -635,6 +764,9 @@ def evaluate(
     missing = sorted(required - set(case))
     if missing:
         return [f"invalid case: missing required field: {field}" for field in missing]
+    surface = case.get("surface", "web")
+    if surface not in EXECUTION_ENVIRONMENT_FIELDS:
+        return [f"invalid case: unsupported surface: {surface}"]
     expect, phase_errors = _phase_expectation(case, phase)
     if phase_errors:
         return phase_errors
@@ -671,7 +803,9 @@ def evaluate(
         diagnostics.append(f"manifest autonomy: expected {expected_autonomy}, found {_run_value(manifest, 'autonomy')}")
     diagnostics.extend(_check_required_ids(manifest, expect))
     diagnostics.extend(_check_traceability(manifest, expect))
-    diagnostics.extend(_check_status_evidence(manifest, expect))
+    diagnostics.extend(_check_status_evidence(manifest, expect, surface))
+    if surface == "service":
+        diagnostics.extend(_check_service_contract(manifest, expect, surface))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))

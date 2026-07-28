@@ -1,0 +1,31 @@
+{
+  "id": "service-generate-all",
+  "entry_skill": "e2e-service",
+  "surface": "service",
+  "mode": "generate",
+  "prompt": "Generate E2E coverage for the service-contract fixture exposing HTTP, GraphQL, gRPC, WebSocket, queue, and stream boundaries. Create one extension with six fixed modules. Do NOT execute tests. Record the generated-unverified status.",
+  "fixture": "service-contract",
+  "expect": {
+    "manifest_status": "generated-unverified",
+    "required_journey_ids": [
+      "journey-http",
+      "journey-graphql",
+      "journey-grpc",
+      "journey-websocket",
+      "journey-queue",
+      "journey-stream"
+    ],
+    "required_check_ids": [
+      "check-http",
+      "check-graphql",
+      "check-grpc",
+      "check-websocket",
+      "check-queue",
+      "check-stream"
+    ]
+  },
+  "autonomy": {
+    "mode": "explicit",
+    "auto_repair": false
+  }
+}

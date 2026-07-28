@@ -1,0 +1,14 @@
+type Order {
+  id: ID!
+  status: String!
+  items: [String!]
+}
+
+type Query {
+  order(id: ID!): Order
+  orders: [Order!]!
+}
+
+schema {
+  query: Query
+}
