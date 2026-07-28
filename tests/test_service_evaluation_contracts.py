@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -579,6 +582,38 @@ class ServiceEvaluationGateTests(unittest.TestCase):
 
 
 class ServiceFixtureContractTests(unittest.TestCase):
+    server_process: subprocess.Popen | None = None
+
+    @classmethod
+    def setUpClass(cls):
+        fixture = ROOT / "evals" / "fixtures" / "service-contract"
+        cls.server_process = subprocess.Popen(
+            ["node", "src/server.js"], cwd=fixture,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", 43170, timeout=1)
+                try:
+                    conn.request("GET", "/health")
+                    if conn.getresponse().status == 200:
+                        return
+                finally:
+                    conn.close()
+            except OSError:
+                pass
+            time.sleep(0.05)
+        cls.tearDownClass()
+        raise RuntimeError("service-contract fixture server did not become ready within 5s")
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls.server_process is not None:
+            cls.server_process.terminate()
+            cls.server_process.wait(timeout=5)
+            cls.server_process = None
+
     def test_service_fixture_has_required_files(self):
         fixture = ROOT / "evals" / "fixtures" / "service-contract"
         self.assertTrue((fixture / "package.json").exists())
@@ -606,7 +641,6 @@ class ServiceFixtureContractTests(unittest.TestCase):
 
     def test_service_fixture_server_exposes_health(self):
         """Verify server exposes /health with expected response."""
-        import http.client
         conn = http.client.HTTPConnection("127.0.0.1", 43170, timeout=5)
         try:
             conn.request("GET", "/health")
