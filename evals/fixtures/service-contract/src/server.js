@@ -5,10 +5,17 @@
  */
 
 import http from "node:http";
+import http2 from "node:http2";
 import { createHash } from "node:crypto";
 import { encodeFrame, decodeFrames } from "./ws-frames.js";
+import { encodeGetOrderResponse, decodeGetOrderRequest, frameMessage, unframeMessage } from "./grpc-codec.js";
 
 const PORT = 43170;
+// Plaintext http2.createServer({allowHTTP1: true}) only negotiates HTTP/1.1 vs HTTP/2
+// via TLS ALPN; without TLS it cannot tell an HTTP/1.1 client from an HTTP/2 one, so
+// real gRPC (HTTP/2, prior knowledge) gets its own dedicated port instead of sharing
+// PORT with the HTTP/1.1 REST/GraphQL/queue/stream/WebSocket endpoints below.
+const GRPC_PORT = 43171;
 const HOST = "127.0.0.1";
 
 // Disposable orders in memory
@@ -87,46 +94,7 @@ function graphqlHandler(req, res, query, variables = {}) {
   jsonResponse(res, 200, response);
 }
 
-function grpcHandler(req, res) {
-  // Simple gRPC-style framing using HTTP/2-like approach with headers
-  // URL is like "/grpc.GetOrder", extract "GetOrder"
-  const fullMethod = req.url?.split("/")?.[1] || "";
-  const method = fullMethod.startsWith("grpc.") ? fullMethod.slice(5) : fullMethod;
-  const bodyRaw = req.body || "{}";
-
-  let parsedBody;
-  try {
-    parsedBody = JSON.parse(bodyRaw);
-  } catch {
-    parsedBody = {};
-  }
-
-  if (method === "GetOrder") {
-    const orderId = parsedBody.id || "";
-    const order = orders.get(orderId);
-    if (order) {
-      jsonResponse(res, 200, {
-        status: { code: 0, message: "OK" },
-        body: { ...order, __typename: "Order" },
-        trailers: { "grpc-status-details-bin": "" },
-      });
-    } else {
-      jsonResponse(res, 200, {
-        status: { code: 5, message: "NOT_FOUND" },
-        body: null,
-        trailers: { "grpc-status-details-bin": JSON.stringify([{ reason: "ORDER_NOT_FOUND" }]) },
-      });
-    }
-  } else {
-    jsonResponse(res, 200, {
-      status: { code: 12, message: "UNIMPLEMENTED" },
-      body: null,
-      trailers: {},
-    });
-  }
-}
-
-const server = http.createServer(async (req, res) => {
+async function requestListener(req, res) {
   // Read request body
   let bodyRaw = "";
   for await (const chunk of req) {
@@ -163,12 +131,6 @@ const server = http.createServer(async (req, res) => {
     } catch {
       jsonResponse(res, 400, { errors: [{ message: "Invalid JSON" }] });
     }
-    return;
-  }
-
-  // gRPC-style endpoint
-  if (path.startsWith("/grpc.") && req.method === "POST") {
-    grpcHandler(req, res);
     return;
   }
 
@@ -251,7 +213,9 @@ const server = http.createServer(async (req, res) => {
 
   // Default 404
   jsonResponse(res, 404, { error: "Not found", path });
-});
+}
+
+const server = http.createServer(requestListener);
 
 server.listen(PORT, HOST, () => {
   console.log(`Service contract fixture listening on ${HOST}:${PORT}`);
@@ -308,12 +272,54 @@ server.on("upgrade", (req, socket, head) => {
   socket.on("error", () => socket.destroy());
 });
 
+// Real HTTP/2 gRPC server. Plaintext HTTP/2 has no ALPN to distinguish it from
+// HTTP/1.1, so it runs on its own port rather than sharing one with `server` above.
+const grpcServer = http2.createServer();
+grpcServer.on("stream", (stream, headers) => {
+  if (headers[":method"] !== "POST" || headers[":path"] !== "/service.contract.OrderService/GetOrder") {
+    stream.respond({ ":status": 404 });
+    stream.end();
+    return;
+  }
+
+  const chunks = [];
+  stream.on("data", (chunk) => chunks.push(chunk));
+  stream.on("end", () => {
+    const framed = unframeMessage(Buffer.concat(chunks));
+    const request = framed ? decodeGetOrderRequest(framed.payload) : { id: "" };
+    const order = orders.get(request.id);
+
+    stream.respond({ ":status": 200, "content-type": "application/grpc+proto" }, { waitForTrailers: true });
+    stream.write(
+      frameMessage(
+        encodeGetOrderResponse(
+          order ? { id: order.id, status: order.status, items: order.items } : { id: "", status: "", items: [] }
+        )
+      )
+    );
+    stream.on("wantTrailers", () => {
+      stream.sendTrailers(
+        order
+          ? { "grpc-status": "0", "grpc-message": "OK" }
+          : { "grpc-status": "5", "grpc-message": "NOT_FOUND" }
+      );
+    });
+    stream.end();
+  });
+});
+
+grpcServer.listen(GRPC_PORT, HOST, () => {
+  console.log(`Service contract gRPC fixture listening on ${HOST}:${GRPC_PORT}`);
+});
+
 // Graceful shutdown
 process.on("SIGTERM", () => {
-  server.close(() => process.exit(0));
+  server.close();
+  grpcServer.close(() => process.exit(0));
 });
 process.on("SIGINT", () => {
-  server.close(() => process.exit(0));
+  server.close();
+  grpcServer.close(() => process.exit(0));
 });
 
 export default server;
