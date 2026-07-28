@@ -160,12 +160,23 @@ def _install_skills(workspace: Path, host: str) -> None:
 
 
 def _snapshot_workspace_baseline(workspace: Path, state_dir: Path) -> None:
-    baseline = {
+    files = {
         path.relative_to(workspace).as_posix(): hashlib.sha256(
             path.read_bytes()
         ).hexdigest()
         for path in sorted(workspace.rglob("*"))
         if path.is_file()
+    }
+    encoded = json.dumps(
+        files,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    baseline = {
+        "version": 1,
+        "file_count": len(files),
+        "files_digest": hashlib.sha256(encoded).hexdigest(),
+        "files": files,
     }
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / WORKSPACE_BASELINE).write_text(

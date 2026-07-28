@@ -149,6 +149,15 @@ def _workspace_files(workspace: Path) -> list[tuple[str, Path]]:
     )
 
 
+def _workspace_baseline_digest(files: dict[str, str]) -> str:
+    encoded = json.dumps(
+        files,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _ids(items: Any) -> set[str]:
     if not isinstance(items, list):
         return set()
@@ -695,20 +704,41 @@ def _check_files(
             if snapshot_errors:
                 diagnostics.extend(snapshot_errors)
                 external_baseline_valid = False
-            elif not all(
-                isinstance(relative, str)
-                and bool(relative)
-                and isinstance(digest, str)
-                and re.fullmatch(r"[0-9a-f]{64}", digest)
-                for relative, digest in snapshot.items()
+            elif (
+                set(snapshot) != {
+                    "version",
+                    "file_count",
+                    "files_digest",
+                    "files",
+                }
+                or snapshot.get("version") != 1
+                or not isinstance(snapshot.get("files"), dict)
+                or not all(
+                    isinstance(relative, str)
+                    and bool(relative)
+                    and isinstance(digest, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", digest)
+                    for relative, digest in snapshot.get("files", {}).items()
+                )
             ):
                 diagnostics.append(
-                    "invalid workspace baseline: expected SHA-256 hash map"
+                    "invalid workspace baseline: expected SHA-256 hash map envelope"
                 )
                 external_baseline_valid = False
             else:
                 assert snapshot is not None
-                installed_baseline = snapshot
+                installed_baseline = snapshot["files"]
+                if (
+                    type(snapshot.get("file_count")) is not int
+                    or snapshot["file_count"] != len(installed_baseline)
+                    or not isinstance(snapshot.get("files_digest"), str)
+                    or snapshot["files_digest"]
+                    != _workspace_baseline_digest(installed_baseline)
+                ):
+                    diagnostics.append(
+                        "invalid workspace baseline: completeness check failed"
+                    )
+                    external_baseline_valid = False
         if external_baseline_valid:
             initial_baseline = dict(baseline)
             initial_baseline.update(installed_baseline)
@@ -1122,11 +1152,18 @@ def _check_mobile_expected_state(
         for profile in lifecycle_profiles
         if profile.get("execution_unit_id") in mobile_unit_ids
     ]
-    expected_profiles = [
-        profile
-        for profile in bound_profiles
-        if profile.get("execution_unit_id") in expected_unit_ids
-    ]
+    if (
+        not expected_check_ids
+        and len(mobile_unit_ids) == 1
+        and len(bound_profiles) == 1
+    ):
+        expected_profiles = bound_profiles
+    else:
+        expected_profiles = [
+            profile
+            for profile in bound_profiles
+            if profile.get("execution_unit_id") in expected_unit_ids
+        ]
 
     selected_target_drivers: list[
         tuple[str, dict[str, Any], dict[str, Any]]
@@ -1197,8 +1234,56 @@ def _check_mobile_expected_state(
     required_roles = expect.get("required_artifact_roles", [])
     required_sequence = expect.get("required_lifecycle_sequence")
     upgrade_expected = bool(required_roles) or bool(required_sequence)
+    upgrade_scope_profiles = expected_profiles
+    if upgrade_expected and required_execution_ids:
+        required_execution_evidence = [
+            evidence_by_id[item]
+            for item in required_execution_ids
+            if item in evidence_by_id
+        ]
+        selected_profiles: list[dict[str, Any]] = []
+        selection_valid = bool(required_execution_evidence)
+        for item in required_execution_evidence:
+            selected_units = {
+                checks_by_id[check_id].get("execution_unit_id")
+                for check_id in item.get("check_ids", [])
+                if check_id in checks_by_id
+            }
+            environment = item.get("execution_environment")
+            target_reference = (
+                environment.get("target_reference")
+                if isinstance(environment, dict)
+                else None
+            )
+            artifact_reference = (
+                environment.get("application_build_ref")
+                if isinstance(environment, dict)
+                else None
+            )
+            matches = [
+                profile
+                for profile in expected_profiles
+                if profile.get("execution_unit_id") in selected_units
+                and profile.get("target_id") == target_reference
+                and artifact_reference in profile.get("artifact_ids", [])
+            ]
+            if len(matches) != 1:
+                selection_valid = False
+            else:
+                selected_profiles.append(matches[0])
+        selected_profile_ids = {
+            profile.get("id")
+            for profile in selected_profiles
+        }
+        if not selection_valid or len(selected_profile_ids) != 1:
+            diagnostics.append(
+                "mobile required lifecycle selection is ambiguous or unbound"
+            )
+            upgrade_scope_profiles = []
+        else:
+            upgrade_scope_profiles = [selected_profiles[0]]
     upgrade_profiles = [
-        profile for profile in expected_profiles
+        profile for profile in upgrade_scope_profiles
         if profile.get("upgrade") is True
     ]
     if upgrade_expected and not upgrade_profiles:

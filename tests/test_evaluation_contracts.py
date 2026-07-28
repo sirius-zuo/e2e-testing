@@ -875,8 +875,11 @@ class HostHarnessTests(unittest.TestCase):
             snapshot = Path(state_dir) / "workspace-baseline.json"
             self.assertTrue(snapshot.is_file())
             text = snapshot.read_text(encoding="utf-8")
-            baseline = json.loads(text)
-            self.assertTrue(baseline)
+            envelope = json.loads(text)
+            self.assertEqual(envelope.get("version"), 1)
+            baseline = envelope["files"]
+            self.assertEqual(envelope["file_count"], len(baseline))
+            self.assertRegex(envelope["files_digest"], r"^[0-9a-f]{64}$")
             self.assertIn(".git/HEAD", baseline)
             self.assertIn("package.json", baseline)
             self.assertIn(".agents/skills/e2e-mobile/SKILL.md", baseline)

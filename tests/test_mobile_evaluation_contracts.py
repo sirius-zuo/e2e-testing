@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from evals import run_host_eval
 from evals.evaluate_result import _check_files, evaluate
 from protocol.v2.e2e_protocol import new_manifest
 
@@ -792,6 +793,68 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_case_upgrade_rejects_same_unit_decoy_upgrade_lifecycle(self):
+        sequence = [
+            "target",
+            "prior-install",
+            "prior-state",
+            "candidate-upgrade",
+            "launch",
+            "cleanup",
+        ]
+
+        def add_decoy_upgrade_profile(manifest):
+            manifest["journeys"][0]["id"] = "journey-mobile-upgrade"
+            manifest["checks"][0].update(
+                id="check-upgrade-visible",
+                journey_id="journey-mobile-upgrade",
+            )
+            execution = manifest["evidence"][0]
+            execution.update(
+                id="evidence-mobile-upgrade",
+                check_ids=["check-upgrade-visible"],
+                outcomes=[{
+                    "check_id": "check-upgrade-visible",
+                    "status": "passed",
+                }],
+                lifecycle=sequence,
+            )
+            manifest["actions"][0]["journey_ids"] = [
+                "journey-mobile-upgrade"
+            ]
+            mobile = manifest["extensions"][0]["data"]
+            mobile["artifacts"].insert(0, {
+                **mobile["artifacts"][0],
+                "id": "artifact-prior-ios",
+                "role": "prior",
+                "artifact_ref": "prior-ios",
+                "build_ref": "prior-1",
+            })
+            mobile["lifecycle_profiles"].append({
+                **mobile["lifecycle_profiles"][0],
+                "id": "lifecycle-decoy-upgrade",
+                "artifact_ids": [
+                    "artifact-prior-ios",
+                    "artifact-candidate-ios",
+                ],
+                "install_policy": "upgrade",
+                "upgrade": True,
+            })
+
+        expect = json.loads(
+            (ROOT / "evals/cases/mobile-upgrade.json").read_text()
+        )["expect"]
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect=expect,
+            mutate_manifest=add_decoy_upgrade_profile,
+        )
+        self.assertIn(
+            "mobile required lifecycle selection is ambiguous or unbound",
+            diagnostics,
+        )
+
     def test_required_bootstrap_is_checked_on_selected_target_driver(self):
         def authorize_unused_driver(manifest):
             mobile = manifest["extensions"][0]["data"]
@@ -917,6 +980,38 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             diagnostics,
         )
 
+    def test_case_bootstrap_accepts_single_unambiguous_no_execution_lifecycle(self):
+        def authorize_only_bound_driver_without_execution(manifest):
+            manifest["run"].update(
+                status="generated-unverified",
+                mode="generate",
+            )
+            manifest["journeys"][0]["status"] = "planned"
+            manifest["execution_units"][0]["status"] = "planned"
+            manifest["checks"][0]["status"] = "planned"
+            manifest["evidence"] = [manifest["evidence"][1]]
+            driver = manifest["extensions"][0]["data"]["drivers"][0]
+            driver.update(
+                bootstrap_status="authorized",
+                authorization_ref="authorization-mobile-bootstrap",
+            )
+
+        expect = json.loads(
+            (
+                ROOT / "evals/cases/mobile-bootstrap-authorized.json"
+            ).read_text()
+        )["expect"]
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect=expect,
+            mutate_manifest=authorize_only_bound_driver_without_execution,
+        )
+        self.assertNotIn(
+            "mobile driver lacks required bootstrap authorization",
+            diagnostics,
+        )
+
     def test_capability_unavailable_evidence_must_match_bound_target_and_driver(self):
         def make_arbitrary_capability_evidence(manifest):
             manifest["run"]["status"] = "capability-unavailable"
@@ -1024,14 +1119,14 @@ class MobileEvaluatorGateTests(unittest.TestCase):
                 "execution_unit_id": "unit-extra",
                 "target_id": "target-extra",
             })
-            manifest["evidence"].append({
+            manifest["evidence"] = [{
                 "id": "evidence-capability",
                 "surface": "mobile",
                 "adapter": "maestro",
                 "target_reference": "target-extra",
                 "source_locations": ["package.json"],
                 "read_only": True,
-            })
+            }]
 
         expect = json.loads(
             (
@@ -1045,6 +1140,38 @@ class MobileEvaluatorGateTests(unittest.TestCase):
             mutate_manifest=bind_capability_to_unevidenced_extra_unit,
         )
         self.assertIn(
+            "missing capability-unavailable mobile adapter and target evidence",
+            diagnostics,
+        )
+
+    def test_case_capability_accepts_single_unambiguous_no_execution_lifecycle(self):
+        def record_capability_for_only_bound_target(manifest):
+            manifest["run"]["status"] = "capability-unavailable"
+            manifest["journeys"][0]["status"] = "planned"
+            manifest["execution_units"][0]["status"] = "planned"
+            manifest["checks"][0]["status"] = "planned"
+            manifest["evidence"] = [{
+                "id": "evidence-capability",
+                "surface": "mobile",
+                "adapter": "appium",
+                "target_reference": "target-ios-sim",
+                "source_locations": ["package.json"],
+                "read_only": True,
+            }]
+            manifest["actions"] = []
+
+        expect = json.loads(
+            (
+                ROOT / "evals/cases/mobile-capability-unavailable.json"
+            ).read_text()
+        )["expect"]
+        diagnostics = self._evaluate(
+            environment=MOBILE_ENVIRONMENT,
+            cleanup_successful=True,
+            expect=expect,
+            mutate_manifest=record_capability_for_only_bound_target,
+        )
+        self.assertNotIn(
             "missing capability-unavailable mobile adapter and target evidence",
             diagnostics,
         )
@@ -1568,6 +1695,54 @@ class MobileCaseContractTests(unittest.TestCase):
                     any(".agents/skills/" in item for item in diagnostics),
                     diagnostics,
                 )
+
+    def test_truncated_external_baseline_envelope_is_reported_without_skill_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            shutil.copytree(FIXTURE, workspace)
+            skill = workspace / ".agents/skills/e2e-mobile/SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("installed by harness", encoding="utf-8")
+            state = root / "state"
+            run_host_eval._snapshot_workspace_baseline(workspace, state)
+            baseline_path = state / "workspace-baseline.json"
+            generated = json.loads(baseline_path.read_text(encoding="utf-8"))
+            if "files" in generated:
+                envelope = generated
+            else:
+                encoded = json.dumps(
+                    generated,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+                envelope = {
+                    "version": 1,
+                    "file_count": len(generated),
+                    "files_digest": hashlib.sha256(encoded).hexdigest(),
+                    "files": generated,
+                }
+            del envelope["files"][".agents/skills/e2e-mobile/SKILL.md"]
+            baseline_path.write_text(
+                json.dumps(envelope),
+                encoding="utf-8",
+            )
+
+            diagnostics = _check_files(
+                workspace,
+                FIXTURE,
+                {"allowed_change_globs": []},
+                state,
+            )
+
+        self.assertIn(
+            "invalid workspace baseline: completeness check failed",
+            diagnostics,
+        )
+        self.assertFalse(
+            any(".agents/skills/" in item for item in diagnostics),
+            diagnostics,
+        )
 
 
 if __name__ == "__main__":
