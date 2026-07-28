@@ -130,8 +130,7 @@ class ReadmeContractTests(unittest.TestCase):
             self.assertIn(required, text)
         self.assertEqual(text.count("### Mobile cases"), 2)
 
-    def test_host_evaluation_guide_lists_exact_host_specific_mobile_commands(self):
-        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+    def _assert_exact_host_mobile_commands(self, text):
         expected_cases = (
             "mobile-generate-appium",
             "mobile-generate-maestro",
@@ -149,23 +148,71 @@ class ReadmeContractTests(unittest.TestCase):
 
         self.assertEqual(set(host_sections), set(expected_hosts))
         for host_name, host_flag in expected_hosts.items():
-            mobile_blocks = re.findall(
-                r"^### Mobile cases\n(?P<body>.*?)(?=^### |\Z)",
+            mobile_sections = re.findall(
+                r"^### Mobile cases\n(?P<body>.*?)(?=^#{1,3}[ \t]+|\Z)",
                 host_sections[host_name],
                 flags=re.MULTILINE | re.DOTALL,
             )
-            self.assertEqual(len(mobile_blocks), 1, host_name)
-            command_block = re.match(
-                r"\n```sh\n(?P<commands>(?:[^\n]+\n)*)```\n*",
-                mobile_blocks[0],
+            self.assertEqual(len(mobile_sections), 1, host_name)
+            fenced_blocks = re.findall(
+                r"^```(?P<language>[^\n]*)\n(?P<commands>.*?)^```[ \t]*$",
+                mobile_sections[0],
+                flags=re.MULTILINE | re.DOTALL,
             )
-            self.assertIsNotNone(command_block, host_name)
+            self.assertEqual(len(fenced_blocks), 1, host_name)
+            language, commands = fenced_blocks[0]
+            self.assertEqual(language, "sh", host_name)
 
             expected_commands = [
                 f"python3 evals/run_host_eval.py --host {host_flag} --case {case}"
                 for case in expected_cases
             ]
-            self.assertEqual(command_block["commands"].splitlines(), expected_commands)
+            self.assertEqual(commands.splitlines(), expected_commands)
+            all_host_eval_commands = re.findall(
+                r"^[ \t]*python3[ \t]+evals/run_host_eval\.py\b[^\n]*",
+                mobile_sections[0],
+                flags=re.MULTILINE,
+            )
+            self.assertEqual(
+                [command.strip() for command in all_host_eval_commands],
+                expected_commands,
+            )
+
+    def test_host_evaluation_guide_lists_exact_host_specific_mobile_commands(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        self._assert_exact_host_mobile_commands(text)
+
+    def test_host_evaluation_guide_rejects_a_second_mobile_command_fence(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        final_codex_command = (
+            "python3 evals/run_host_eval.py --host codex "
+            "--case mobile-production-refusal\n```"
+        )
+        extra_fence = (
+            f"{final_codex_command}\n\n```sh\n"
+            "python3 evals/run_host_eval.py --host codex --case mobile-extra\n```"
+        )
+        mutated = text.replace(final_codex_command, extra_fence, 1)
+        self.assertNotEqual(mutated, text)
+
+        with self.assertRaises(AssertionError):
+            self._assert_exact_host_mobile_commands(mutated)
+
+    def test_host_evaluation_guide_rejects_an_extra_mobile_command(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        final_codex_command = (
+            "python3 evals/run_host_eval.py --host codex "
+            "--case mobile-production-refusal\n```"
+        )
+        extra_command = (
+            f"{final_codex_command}\n"
+            "python3 evals/run_host_eval.py --host codex --case mobile-extra"
+        )
+        mutated = text.replace(final_codex_command, extra_command, 1)
+        self.assertNotEqual(mutated, text)
+
+        with self.assertRaises(AssertionError):
+            self._assert_exact_host_mobile_commands(mutated)
 
 
 if __name__ == "__main__":
