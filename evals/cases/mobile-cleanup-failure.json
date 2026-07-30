@@ -1,0 +1,17 @@
+{
+  "id": "mobile-cleanup-failure",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "verify",
+  "prompt": "Verify a scenario where cleanup fails after a successful check. Record the passed check, a mobile-cleanup action, cleanup_successful false, and an inconclusive classification linked to the failed cleanup evidence.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "blocked",
+    "required_evidence_ids": ["evidence-cleanup-failed"],
+    "required_check_ids": ["check-cleanup-passed"],
+    "required_action_capabilities": ["mobile-cleanup"],
+    "required_classifications": ["inconclusive"],
+    "required_cleanup_outcome": "failed"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

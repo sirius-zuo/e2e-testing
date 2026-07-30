@@ -7,6 +7,9 @@ support execution without becoming a surface, extension, execution unit, or
 acceptance oracle. Database actions use existing core records and never
 influence verification outcomes directly.
 
+Mobile may request database setup, cleanup, and diagnostics through persisted
+orchestrator actions, but database state never satisfies a mobile check.
+
 ## Allowed capabilities
 
 - `database-setup`: insert disposable test data before selected execution.

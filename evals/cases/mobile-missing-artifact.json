@@ -1,0 +1,15 @@
+{
+  "id": "mobile-missing-artifact",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "verify",
+  "prompt": "Attempt verification without a candidate artifact or approved build command. Do not build, install, or execute; persist no candidate artifact.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "needs-clarification",
+    "forbidden_artifact_roles": ["candidate"],
+    "forbidden_command_terms": ["build", "install"],
+    "forbid_execution": true
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

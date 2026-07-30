@@ -1,0 +1,16 @@
+{
+  ".maestro/login.yaml": "839fef762a824a1d3bb89efb4ef45f8fa7ca7affac3bbd41405d09deaf63eef1",
+  "appium.config.js": "75fcaba7d381a744357762f25a65eafb5cd23695538c3f0162d3620cfecdb5d7",
+  "mobile/app.json": "38aeedc8c5e1a72fc8cc1d7b2535d7393167b2e7e0a98741636788f0e84951ff",
+  "mobile/artifacts/candidate-android.json": "11d410d6ca52b26f70e01527a4d74571967fb9ac6d2e8e28d925a3d333a62f88",
+  "mobile/artifacts/candidate-ios.json": "05f74ce665b005f946c970d2496e37ce403cc2595cd81ace141541a4c54dae40",
+  "mobile/artifacts/prior-android.json": "99fc7980e54c1a2251b0d055553b155c00724b9e6f662f1329d1cc6834e61b6b",
+  "mobile/artifacts/prior-ios.json": "443e92c9b4cb5ec399034d1c0b02b5beaab8c33366f42789bf360d799b871e6e",
+  "mobile/targets.json": "dc327baa2b8bf7547e81b543242537915118070b71713950a2c7387fcccb8318",
+  "package.json": "a8cdf8bfda3e6dc93be791a3ec0fe333b40bd26d7558c5caa17f6a08ebb59f58",
+  "repositories/cross-platform/project.json": "59d66a2c3e0b0ca50267010e797a96597ae8edf4795df9b4d0895044716d15b3",
+  "repositories/native-android/project.json": "6f214f432c637be62b1e3742eea57e2f0a94b52d173d5903ddbb2fb2177aa9c4",
+  "repositories/native-ios/project.json": "3cc5b9c08410f7cb735d7ef62bdd7d42af30892cd9bfea20f6071b29c4a09881",
+  "test-support/mobile-driver.js": "4b8604c009ad78bd9f34c73b6e38667e817cce0d6788d54bc138f80d06ed6e82",
+  "tests/fixture-contract.test.js": "f07be2b7ef6546a1ce83aabfd09f3de1af53b2d33a9c8a71a247592b0e386f91"
+}

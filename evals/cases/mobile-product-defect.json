@@ -1,0 +1,14 @@
+{
+  "id": "mobile-product-defect",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "verify",
+  "prompt": "Verify a scenario where the installed application exhibits a product defect.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "handoff-required",
+    "required_journey_ids": ["journey-mobile-defect"],
+    "required_check_ids": ["check-defect"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

@@ -1,0 +1,7 @@
+{
+  "id": "artifact-prior-ios",
+  "platform": "ios",
+  "role": "prior",
+  "app_id": "app-mobile-contract",
+  "build_ref": "prior-1"
+}

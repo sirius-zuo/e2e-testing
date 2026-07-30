@@ -301,3 +301,106 @@ class ProtocolV2ExtensionTests(unittest.TestCase):
         manifest["extensions"] = [service_extension(data)]
         errors = validate_manifest(manifest)
         self.assertTrue(any("stream.role is not an allowed value" in e for e in errors))
+
+
+def mobile_data():
+    return {
+        "application": {
+            "id": "app-shop",
+            "ios_bundle_id": "com.example.shop",
+            "android_package_id": "com.example.shop",
+            "source_refs": ["mobile/app.json"],
+            "config_refs": ["appium.config.js"],
+            "build_command_refs": ["build-mobile"],
+            "entry_points": ["native", "embedded-webview"],
+            "framework_evidence": ["react-native"],
+        },
+        "drivers": [{
+            "id": "driver-appium",
+            "kind": "appium",
+            "version": "3.0",
+            "adapter_version": "1.0",
+            "config_refs": ["appium.config.js"],
+            "command_ref": "npm run e2e:mobile",
+            "capabilities": ["install", "launch", "reset", "deep-link"],
+            "host_platforms": ["macos"],
+            "remote_endpoint_ref": "",
+            "bootstrap_status": "existing",
+            "authorization_ref": "",
+        }],
+        "targets": [{
+            "id": "target-ios-sim",
+            "platform": "ios",
+            "kind": "simulator",
+            "device_ref": "iphone-simulator",
+            "os_version": "supported",
+            "driver_id": "driver-appium",
+            "provisioning_status": "ready",
+            "disposable": True,
+            "capabilities": ["install", "launch", "reset", "deep-link"],
+            "evidence_refs": ["evidence-target"],
+        }],
+        "artifacts": [{
+            "id": "artifact-candidate-ios",
+            "platform": "ios",
+            "role": "candidate",
+            "artifact_ref": "mobile/artifacts/candidate-ios.json",
+            "build_command_ref": "build-mobile",
+            "application_id": "app-shop",
+            "build_ref": "candidate-1",
+            "provisioning_ref": "",
+        }],
+        "lifecycle_profiles": [{
+            "id": "lifecycle-ios",
+            "execution_unit_id": "unit-ios",
+            "target_id": "target-ios-sim",
+            "artifact_ids": ["artifact-candidate-ios"],
+            "install_policy": "fresh",
+            "launch_policy": "cold",
+            "reset_policy": "app-scoped",
+            "background_foreground": True,
+            "orientation": "portrait",
+            "deep_link_refs": ["shop://checkout"],
+            "permission_profile_refs": ["permissions-basic"],
+            "upgrade": False,
+            "setup_action_refs": [],
+            "cleanup_action_refs": ["action-mobile-cleanup"],
+        }],
+    }
+
+
+def mobile_extension(data=None):
+    return {
+        "id": "extension-mobile",
+        "namespace": "e2e.mobile",
+        "version": "1.0",
+        "owner": "e2e-mobile",
+        "data": data or mobile_data(),
+    }
+
+
+class ProtocolV2MobileExtensionTests(unittest.TestCase):
+    def test_mobile_extension_validates_complete_data(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-27T00:00:00Z")
+        manifest["extensions"] = [mobile_extension()]
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_mobile_extension_rejects_unknown_driver(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-27T00:00:00Z")
+        data = mobile_data()
+        data["drivers"][0]["kind"] = "detox"
+        manifest["extensions"] = [mobile_extension(data)]
+        self.assertIn(
+            "extension data.drivers[0].kind is not an allowed value",
+            validate_manifest(manifest),
+        )
+
+    def test_mobile_extension_rejects_whole_device_reset(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-07-27T00:00:00Z")
+        data = mobile_data()
+        data["lifecycle_profiles"][0]["reset_policy"] = "whole-device"
+        manifest["extensions"] = [mobile_extension(data)]
+        self.assertIn(
+            "extension data.lifecycle_profiles[0].reset_policy is not an allowed value",
+            validate_manifest(manifest),
+        )

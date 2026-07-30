@@ -154,7 +154,7 @@ def _repair_attempt() -> dict:
 class FixtureContractTests(unittest.TestCase):
     def test_cases_have_required_fields_and_existing_fixtures(self):
         case_paths = sorted(CASES.glob("*.json"))
-        self.assertEqual(len(case_paths), 17)
+        self.assertEqual(len(case_paths), 29)
         original_cases = {
             "greenfield-source", "live-assisted-generation", "existing-playwright",
             "unsupported-cypress", "conflicting-evidence", "verify-pass",
@@ -165,13 +165,24 @@ class FixtureContractTests(unittest.TestCase):
             "service-production-refusal", "service-capability-unavailable",
             "service-product-defect", "service-database-support",
         }
-        self.assertEqual({path.stem for path in case_paths}, original_cases | service_cases)
+        mobile_cases = {
+            "mobile-generate-appium", "mobile-generate-maestro",
+            "mobile-verify-lifecycle", "mobile-upgrade",
+            "mobile-production-refusal", "mobile-capability-unavailable",
+            "mobile-product-defect", "mobile-cleanup-failure",
+            "mobile-bootstrap-authorization", "mobile-bootstrap-authorized",
+            "mobile-missing-credentials", "mobile-missing-artifact",
+        }
+        self.assertEqual(
+            {path.stem for path in case_paths},
+            original_cases | service_cases | mobile_cases,
+        )
         for path in case_paths:
             with self.subTest(case=path.stem):
                 case = json.loads(path.read_text())
                 self.assertTrue(REQUIRED_CASE_FIELDS <= set(case))
                 self.assertTrue((FIXTURES / case["fixture"]).is_dir())
-                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service"})
+                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service", "e2e-mobile"})
                 self.assertNotIn("e2e-web-playwright", json.dumps(case))
 
     def test_verified_case_expectations_name_the_execution_evidence_to_bind(self):
@@ -534,6 +545,48 @@ class EvaluatorTests(unittest.TestCase):
             evaluate(CASES / "product-defect-handoff.json", workspace, "handoff", state),
         )
 
+    def test_failed_execution_evidence_rejects_invalid_duration(self):
+        for duration in (True, -1, "125", float("nan"), float("inf")):
+            with self.subTest(duration=duration):
+                evidence = _product_defect_evidence()[0]
+                evidence["duration_ms"] = duration
+                self.assertFalse(
+                    evaluate_result._is_failed_execution_evidence(
+                        evidence,
+                        {"check-checkout"},
+                        "web",
+                    )
+                )
+
+    def test_product_handoff_rejects_non_finite_failed_execution_duration(self):
+        for duration in (float("nan"), float("inf")):
+            with self.subTest(duration=duration):
+                workspace = Path(self.tmp.name) / f"non-finite-{duration}"
+                shutil.copytree(FIXTURES / "product-defect", workspace)
+                manifest = _manifest(workspace, status="handoff-required")
+                manifest["run"]["mode"] = "verify"
+                manifest["evidence"] = [
+                    *_product_defect_evidence(),
+                    _source_evidence(),
+                ]
+                manifest["evidence"][0]["duration_ms"] = duration
+                manifest["handoffs"] = [_product_defect_handoff()]
+                target = workspace / ".e2e"
+                state = Path(self.tmp.name) / f"non-finite-state-{duration}"
+                target.mkdir()
+                (target / "manifest.json").write_text(json.dumps(manifest))
+                self.assertIn(
+                    "handoff-required status requires failed selected-test "
+                    "execution and linked product-defect classification "
+                    "evidence",
+                    evaluate(
+                        CASES / "product-defect-handoff.json",
+                        workspace,
+                        "handoff",
+                        state,
+                    ),
+                )
+
     def test_product_handoff_requires_complete_defect_details_and_valid_refs(self):
         workspace = Path(self.tmp.name) / "incomplete-product-handoff"
         shutil.copytree(FIXTURES / "product-defect", workspace)
@@ -848,14 +901,59 @@ class HostHarnessTests(unittest.TestCase):
             ["claude", "-p", "--permission-mode", "acceptEdits", "--no-session-persistence"],
         )
 
-    def test_installs_both_skills_in_the_host_specific_directory(self):
+    def test_installs_all_skills_in_the_host_specific_directory(self):
         for host, skill_root in (("codex", ".agents/skills"), ("claude", ".claude/skills")):
             with self.subTest(host=host):
                 self._run(host, keep_results=True)
                 workspace = next((self.results / host / "greenfield-source").glob("*/workspace"))
-                self.assertTrue((workspace / skill_root / "e2e-testing" / "SKILL.md").is_file())
-                self.assertTrue((workspace / skill_root / "e2e-web" / "SKILL.md").is_file())
+                for skill in ("e2e-testing", "e2e-web", "e2e-service", "e2e-mobile"):
+                    self.assertTrue((workspace / skill_root / skill / "SKILL.md").is_file())
                 self.assertFalse((workspace / skill_root / "e2e-web-playwright").exists())
+
+    def test_snapshots_harness_installed_skills_deterministically_before_host_evaluation(self):
+        snapshots: list[str] = []
+
+        def evaluator(_case_path, workspace, _phase, state_dir):
+            snapshot = Path(state_dir) / "workspace-baseline.json"
+            self.assertTrue(snapshot.is_file())
+            text = snapshot.read_text(encoding="utf-8")
+            envelope = json.loads(text)
+            self.assertEqual(envelope.get("version"), 1)
+            baseline = envelope["files"]
+            self.assertEqual(envelope["file_count"], len(baseline))
+            self.assertRegex(envelope["files_digest"], r"^[0-9a-f]{64}$")
+            self.assertIn(".git/HEAD", baseline)
+            self.assertIn("package.json", baseline)
+            self.assertIn(".agents/skills/e2e-mobile/SKILL.md", baseline)
+            self.assertEqual(
+                baseline[".agents/skills/e2e-mobile/SKILL.md"],
+                _sha256(Path(workspace) / ".agents/skills/e2e-mobile/SKILL.md"),
+            )
+            diagnostics = evaluate_result._check_files(
+                Path(workspace),
+                FIXTURES / "greenfield-source",
+                {"allowed_change_globs": []},
+                Path(state_dir),
+            )
+            self.assertFalse(
+                any(".agents/skills/" in item for item in diagnostics),
+                diagnostics,
+            )
+            snapshots.append(text)
+            return []
+
+        process = mock.Mock(pid=4321, returncode=0)
+        process.communicate.return_value = ("", "")
+        with (
+            mock.patch("evals.run_host_eval.shutil.which", return_value="/usr/bin/codex"),
+            mock.patch("evals.run_host_eval._spawn_host", return_value=process),
+            mock.patch("evals.run_host_eval.evaluate", side_effect=evaluator),
+        ):
+            self.assertEqual(run_host_eval.run_case("codex", "greenfield-source"), 0)
+            self.assertEqual(run_host_eval.run_case("codex", "greenfield-source"), 0)
+
+        self.assertEqual(len(snapshots), 2)
+        self.assertEqual(snapshots[0], snapshots[1])
 
     def test_each_run_uses_a_fresh_fixture_copy_and_never_the_source_fixture(self):
         _, first, _, _ = self._run(keep_results=True)

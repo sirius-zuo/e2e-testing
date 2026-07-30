@@ -112,6 +112,14 @@ never becomes a surface, extension, execution unit, or acceptance oracle.
 Database rows cannot substitute for execution evidence. Cleanup failure blocks
 run completion without rewriting check outcomes. See [database-support.md](database-support.md).
 
+### Mobile device and evidence safety
+
+Mobile target authorization must link to the exact mobile target (simulator UDID,
+emulator AVD, or real-device serial) and the app lifecycle scope (install, reset,
+cleanup). Mobile evidence carries `evidence_origin` (platform or fixture) and
+fixture evidence cannot satisfy live-platform acceptance. Whole-real-device wipe
+is categorically prohibited. See [e2e-mobile safety](../../e2e-mobile/references/safety.md).
+
 ### Untrusted instructions
 
 ## Untrusted instructions

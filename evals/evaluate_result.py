@@ -7,6 +7,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import math
 import re
 import shlex
 import shutil
@@ -23,6 +24,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_PROTOCOL = ROOT / "skills" / "e2e-testing" / "scripts" / "e2e_protocol.py"
 CHECKPOINT_RUN_ID = re.compile(r"run-[a-z0-9-]+$")
+WORKSPACE_BASELINE = "workspace-baseline.json"
+PROTECTED_SKILL_ROOTS = (".agents/skills/", ".claude/skills/")
 
 
 def _load_protocol():
@@ -147,6 +150,15 @@ def _workspace_files(workspace: Path) -> list[tuple[str, Path]]:
     )
 
 
+def _workspace_baseline_digest(files: dict[str, str]) -> str:
+    encoded = json.dumps(
+        files,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _ids(items: Any) -> set[str]:
     if not isinstance(items, list):
         return set()
@@ -208,7 +220,16 @@ def _is_execution_evidence(item: Any, check_ids: set[str], surface: str) -> bool
     command = item.get("command")
     if not isinstance(command, str) or not command.strip():
         return False
-    if item.get("exit_code") != 0 or not isinstance(item.get("duration_ms"), (int, float)):
+    exit_code = item.get("exit_code")
+    duration = item.get("duration_ms")
+    if (
+        type(exit_code) is not int
+        or exit_code != 0
+        or isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or (isinstance(duration, float) and not math.isfinite(duration))
+        or duration < 0
+    ):
         return False
     selected = item.get("check_ids")
     outcomes = item.get("outcomes")
@@ -241,7 +262,10 @@ def _is_failed_execution_evidence(item: Any, check_ids: set[str], surface: str) 
     duration = item.get("duration_ms")
     if (
         isinstance(exit_code, bool) or not isinstance(exit_code, int) or exit_code == 0
-        or isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration < 0
+        or isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or (isinstance(duration, float) and not math.isfinite(duration))
+        or duration < 0
     ):
         return False
     selected = item.get("check_ids")
@@ -266,15 +290,183 @@ def _classification(item: Any, primary: str) -> bool:
     if not isinstance(item, dict) or not isinstance(item.get("classification"), dict):
         return False
     classification = item["classification"]
+    confidence = classification.get("confidence")
     return (
         classification.get("primary") == primary
-        and isinstance(classification.get("confidence"), (int, float))
-        and classification["confidence"] >= 0.8
+        and not isinstance(confidence, bool)
+        and isinstance(confidence, (int, float))
+        and 0.8 <= confidence <= 1.0
+        and math.isfinite(confidence)
         and isinstance(classification.get("rationale"), str)
         and bool(classification["rationale"].strip())
         and isinstance(classification.get("evidence_ids"), list)
         and bool(classification["evidence_ids"])
     )
+
+
+def _check_expected_classifications(
+    manifest: dict[str, Any],
+    expect: dict[str, Any],
+) -> list[str]:
+    evidence = manifest.get("evidence")
+    records = evidence if isinstance(evidence, list) else []
+    evidence_ids = _ids(records)
+    required_evidence_ids = {
+        item
+        for item in expect.get("required_evidence_ids", [])
+        if isinstance(item, str)
+    }
+
+    def is_bound_classification(item: Any, primary: str) -> bool:
+        if not _classification(item, primary):
+            return False
+        references = item["classification"]["evidence_ids"]
+        record_id = item.get("id")
+        return (
+            all(isinstance(reference, str) for reference in references)
+            and set(references) <= evidence_ids
+            and record_id not in references
+            and (
+                not required_evidence_ids
+                or bool(set(references) & required_evidence_ids)
+            )
+        )
+
+    return [
+        f"missing evidence classification: {primary}"
+        for primary in expect.get("required_classifications", [])
+        if not any(is_bound_classification(item, primary) for item in records)
+    ]
+
+
+def _check_expected_action_capabilities(
+    manifest: dict[str, Any],
+    expect: dict[str, Any],
+) -> list[str]:
+    actions = manifest.get("actions")
+    records = actions if isinstance(actions, list) else []
+    evidence = manifest.get("evidence")
+    evidence_records = evidence if isinstance(evidence, list) else []
+    evidence_ids = _ids(evidence_records)
+    required_evidence_ids = {
+        item
+        for item in expect.get("required_evidence_ids", [])
+        if isinstance(item, str)
+    }
+    journey_ids = _ids(manifest.get("journeys"))
+    required_journey_ids = {
+        item
+        for item in expect.get("required_journey_ids", [])
+        if isinstance(item, str)
+    }
+    required_check_ids = {
+        item
+        for item in expect.get("required_check_ids", [])
+        if isinstance(item, str)
+    }
+    required_journey_ids.update(
+        item.get("journey_id")
+        for item in manifest.get("checks", [])
+        if isinstance(item, dict)
+        and item.get("id") in required_check_ids
+        and isinstance(item.get("journey_id"), str)
+    )
+
+    def has_bound_action(capability: str) -> bool:
+        for action in records:
+            if not isinstance(action, dict) or action.get("capability") != capability:
+                continue
+            scoped_journeys = action.get("journey_ids")
+            if (
+                not isinstance(scoped_journeys, list)
+                or not all(isinstance(item, str) for item in scoped_journeys)
+                or not set(scoped_journeys) <= journey_ids
+                or (
+                    required_journey_ids
+                    and not required_journey_ids <= set(scoped_journeys)
+                )
+            ):
+                continue
+            if capability == "mobile-cleanup":
+                if any(
+                    isinstance(item, dict)
+                    and item.get("cleanup_action_id") == action.get("id")
+                    and (
+                        not required_evidence_ids
+                        or item.get("id") in required_evidence_ids
+                    )
+                    for item in evidence_records
+                ):
+                    return True
+                continue
+            references = action.get("evidence_ids")
+            if (
+                isinstance(references, list)
+                and bool(references)
+                and all(isinstance(reference, str) for reference in references)
+                and set(references) <= evidence_ids
+                and (
+                    not required_evidence_ids
+                    or bool(set(references) & required_evidence_ids)
+                )
+            ):
+                return True
+        return False
+
+    return [
+        f"missing action capability: {capability}"
+        for capability in expect.get("required_action_capabilities", [])
+        if not has_bound_action(capability)
+    ]
+
+
+def _check_forbidden_execution(
+    evidence: Any,
+    expect: dict[str, Any],
+) -> list[str]:
+    if expect.get("forbid_execution") is not True:
+        return []
+    records = evidence if isinstance(evidence, list) else []
+
+    def is_attempt(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        if any(
+            isinstance(item.get(field), str) and bool(item[field].strip())
+            for field in ("command", "command_ref")
+        ):
+            return True
+        if (
+            ("exit_code" in item and type(item.get("exit_code")) is int)
+            or (
+                "duration_ms" in item
+                and isinstance(item.get("duration_ms"), (int, float))
+                and not isinstance(item.get("duration_ms"), bool)
+            )
+        ):
+            return True
+        for operation in ("build", "install", "launch", "driver"):
+            for field in (
+                f"{operation}_attempt",
+                f"{operation}_attempted",
+                f"attempted_{operation}",
+            ):
+                value = item.get(field)
+                if value is True or isinstance(value, dict):
+                    return True
+        attempt = item.get("attempt")
+        return (
+            isinstance(attempt, dict)
+            and attempt.get("kind") in {"build", "install", "launch", "driver"}
+        )
+
+    attempted_execution = any(
+        is_attempt(item)
+        for item in records
+    )
+    if attempted_execution:
+        return ["mobile case forbids execution evidence"]
+    return []
 
 
 def _linked_classification(
@@ -476,7 +668,12 @@ def _check_status_evidence(manifest: dict[str, Any], expect: dict[str, Any], sur
     return diagnostics
 
 
-def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list[str]:
+def _check_files(
+    workspace: Path,
+    fixture: Path,
+    expect: dict[str, Any],
+    state_dir: Path | None = None,
+) -> list[str]:
     diagnostics: list[str] = []
     baseline, baseline_errors = _read_json(fixture / ".fixture-baseline.json", "fixture baseline")
     if baseline_errors:
@@ -511,6 +708,79 @@ def _check_files(workspace: Path, fixture: Path, expect: dict[str, Any]) -> list
             for relative in matches
         ):
             diagnostics.append(f"required change missing: {pattern}")
+    allowed_change_globs = expect.get("allowed_change_globs")
+    if isinstance(allowed_change_globs, list):
+        installed_baseline: dict[str, Any] = {}
+        external_baseline_valid = True
+        if state_dir is not None:
+            snapshot, snapshot_errors = _read_json(
+                state_dir / WORKSPACE_BASELINE,
+                "workspace baseline",
+            )
+            if snapshot_errors:
+                diagnostics.extend(snapshot_errors)
+                external_baseline_valid = False
+            elif (
+                set(snapshot) != {
+                    "version",
+                    "file_count",
+                    "files_digest",
+                    "files",
+                }
+                or type(snapshot.get("version")) is not int
+                or snapshot["version"] != 1
+                or not isinstance(snapshot.get("files"), dict)
+                or not all(
+                    isinstance(relative, str)
+                    and bool(relative)
+                    and isinstance(digest, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", digest)
+                    for relative, digest in snapshot.get("files", {}).items()
+                )
+            ):
+                diagnostics.append(
+                    "invalid workspace baseline: expected SHA-256 hash map envelope"
+                )
+                external_baseline_valid = False
+            else:
+                assert snapshot is not None
+                installed_baseline = snapshot["files"]
+                if (
+                    type(snapshot.get("file_count")) is not int
+                    or snapshot["file_count"] != len(installed_baseline)
+                    or not isinstance(snapshot.get("files_digest"), str)
+                    or snapshot["files_digest"]
+                    != _workspace_baseline_digest(installed_baseline)
+                ):
+                    diagnostics.append(
+                        "invalid workspace baseline: completeness check failed"
+                    )
+                    external_baseline_valid = False
+        if external_baseline_valid:
+            initial_baseline = dict(baseline)
+            initial_baseline.update(installed_baseline)
+            baseline_names = set(initial_baseline)
+            current_names = {relative for relative, _ in files}
+            changed_or_created = {
+                relative
+                for relative, path in files
+                if (
+                    relative not in baseline_names
+                    or _sha256(path) != initial_baseline[relative]
+                )
+                and not relative.startswith(".e2e/")
+                and relative != ".fixture-baseline.json"
+            }
+            changed_or_created.update(baseline_names - current_names)
+            for relative in sorted(changed_or_created):
+                protected = relative.startswith(PROTECTED_SKILL_ROOTS)
+                if protected or not any(
+                    _matches(relative, pattern)
+                    for pattern in allowed_change_globs
+                ):
+                    diagnostics.append(
+                        f"unauthorized mobile case change: {relative}"
+                    )
     for relative, expected_hash in expect.get("expected_file_hashes", {}).items():
         actual = workspace / relative
         if not actual.is_file() or _sha256(actual) != expected_hash:
@@ -637,7 +907,17 @@ EXECUTION_ENVIRONMENT_FIELDS = {
         "protocol", "client", "client_version", "os_platform", "runtime",
         "application_build_ref", "target_reference", "target_tier",
     },
+    "mobile": {
+        "driver", "driver_version", "platform", "os_version", "target_kind",
+        "application_build_ref", "target_reference", "target_tier",
+        "evidence_origin",
+    },
 }
+
+MOBILE_DRIVERS = {"appium", "maestro"}
+MOBILE_PLATFORMS = {"ios", "android"}
+MOBILE_TARGET_KINDS = {"simulator", "emulator", "real", "remote"}
+MOBILE_EVIDENCE_ORIGINS = {"platform", "fixture"}
 
 SERVICE_PROTOCOLS = {"http", "graphql", "grpc", "websocket", "queue", "stream"}
 DATABASE_CAPABILITIES = {"database-setup", "database-cleanup", "database-diagnostics"}
@@ -747,6 +1027,855 @@ def _check_service_contract(manifest: dict[str, Any], expect: dict[str, Any], su
     return diagnostics
 
 
+def _mobile_extension_records(
+    extension: dict[str, Any],
+) -> tuple[
+    str | None,
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    list[dict[str, Any]],
+    list[str],
+]:
+    data = extension.get("data")
+    if not isinstance(data, dict):
+        return None, {}, {}, {}, [], []
+    application = data.get("application")
+    application_id = (
+        application.get("id")
+        if isinstance(application, dict) and isinstance(application.get("id"), str)
+        else None
+    )
+
+    duplicate_ids: list[str] = []
+
+    def index_records(name: str, label: str) -> dict[str, dict[str, Any]]:
+        records = data.get(name)
+        if not isinstance(records, list):
+            return {}
+        indexed: dict[str, dict[str, Any]] = {}
+        for item in records:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                continue
+            record_id = item["id"]
+            if record_id in indexed:
+                duplicate_ids.append(f"duplicate mobile {label} id: {record_id}")
+                continue
+            indexed[record_id] = item
+        return indexed
+
+    profiles = data.get("lifecycle_profiles")
+    lifecycle_profiles = [
+        item for item in profiles if isinstance(item, dict)
+    ] if isinstance(profiles, list) else []
+    profile_ids: set[str] = set()
+    for profile in lifecycle_profiles:
+        profile_id = profile.get("id")
+        if not isinstance(profile_id, str):
+            continue
+        if profile_id in profile_ids:
+            duplicate_ids.append(f"duplicate mobile lifecycle id: {profile_id}")
+            continue
+        profile_ids.add(profile_id)
+    return (
+        application_id,
+        index_records("drivers", "driver"),
+        index_records("targets", "target"),
+        index_records("artifacts", "artifact"),
+        lifecycle_profiles,
+        duplicate_ids,
+    )
+
+
+def _check_mobile_expected_state(
+    manifest: dict[str, Any],
+    expect: dict[str, Any],
+    *,
+    drivers: dict[str, dict[str, Any]],
+    targets: dict[str, dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+    lifecycle_profiles: list[dict[str, Any]],
+    mobile_unit_ids: set[str],
+) -> list[str]:
+    diagnostics: list[str] = []
+    evidence = manifest.get("evidence", [])
+    evidence_records = evidence if isinstance(evidence, list) else []
+    evidence_by_id = {
+        item["id"]: item
+        for item in evidence_records
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    checks_by_id = {
+        item["id"]: item
+        for item in manifest.get("checks", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    required_execution_ids = {
+        item
+        for item in expect.get("required_execution_evidence_ids", [])
+        if isinstance(item, str)
+    }
+    required_evidence_ids = required_execution_ids | {
+        item
+        for item in expect.get("required_evidence_ids", [])
+        if isinstance(item, str)
+    }
+    expected_evidence = [
+        evidence_by_id[item]
+        for item in required_evidence_ids
+        if item in evidence_by_id
+    ]
+    required_check_ids = {
+        item
+        for item in expect.get("required_check_ids", [])
+        if isinstance(item, str)
+    }
+    expected_check_ids = set(required_check_ids)
+    expected_phase = expect.get(
+        "_phase_name",
+        _run_value(manifest, "mode"),
+    )
+    final_revision = _run_value(manifest, "revision")
+    if not expected_check_ids:
+        expected_check_ids.update(
+            check_id
+            for item in expected_evidence
+            for check_id in item.get("check_ids", [])
+            if check_id in checks_by_id
+        )
+    if not expected_check_ids:
+        expected_check_ids.update(
+            check_id
+            for item in evidence_records
+            if _is_execution_evidence(
+                item,
+                set(checks_by_id),
+                "mobile",
+            )
+            and item.get("phase") == expected_phase
+            and type(final_revision) is int
+            and type(item.get("manifest_revision_consumed")) is int
+            and final_revision == item["manifest_revision_consumed"] + 1
+            for check_id in item.get("check_ids", [])
+            if checks_by_id.get(check_id, {}).get("status") == "passed"
+        )
+    expected_unit_ids = {
+        checks_by_id[check_id].get("execution_unit_id")
+        for check_id in expected_check_ids
+        if check_id in checks_by_id
+    }
+    bound_profiles = [
+        profile
+        for profile in lifecycle_profiles
+        if profile.get("execution_unit_id") in mobile_unit_ids
+    ]
+    if (
+        not expected_check_ids
+        and len(mobile_unit_ids) == 1
+        and len(bound_profiles) == 1
+    ):
+        expected_profiles = bound_profiles
+    else:
+        expected_profiles = [
+            profile
+            for profile in bound_profiles
+            if profile.get("execution_unit_id") in expected_unit_ids
+        ]
+
+    profile_execution_evidence = (
+        [
+            evidence_by_id[item]
+            for item in required_execution_ids
+            if item in evidence_by_id
+        ]
+        if required_execution_ids
+        else evidence_records
+    )
+    selected_execution_profiles: list[dict[str, Any]] = []
+    for item in profile_execution_evidence:
+        if not _is_execution_evidence(
+            item,
+            set(checks_by_id),
+            "mobile",
+        ):
+            continue
+        consumed_revision = item.get("manifest_revision_consumed")
+        if (
+            item.get("phase") != expected_phase
+            or type(final_revision) is not int
+            or type(consumed_revision) is not int
+            or final_revision != consumed_revision + 1
+        ):
+            continue
+        selected_units = {
+            checks_by_id[check_id].get("execution_unit_id")
+            for check_id in item.get("check_ids", [])
+            if check_id in expected_check_ids and check_id in checks_by_id
+        }
+        environment = item.get("execution_environment")
+        target_reference = (
+            environment.get("target_reference")
+            if isinstance(environment, dict)
+            else None
+        )
+        artifact_reference = (
+            environment.get("application_build_ref")
+            if isinstance(environment, dict)
+            else None
+        )
+        for unit_id in selected_units:
+            matches = [
+                profile
+                for profile in expected_profiles
+                if profile.get("execution_unit_id") == unit_id
+                and profile.get("target_id") == target_reference
+                and artifact_reference in profile.get("artifact_ids", [])
+            ]
+            if len(matches) == 1:
+                selected_execution_profiles.append(matches[0])
+
+    selected_target_drivers: list[
+        tuple[str, dict[str, Any], dict[str, Any]]
+    ] = []
+    for profile in expected_profiles:
+        target_id = profile.get("target_id")
+        target = targets.get(target_id)
+        driver = (
+            drivers.get(target.get("driver_id"))
+            if isinstance(target, dict)
+            else None
+        )
+        if (
+            isinstance(target_id, str)
+            and isinstance(target, dict)
+            and isinstance(driver, dict)
+        ):
+            selected_target_drivers.append((target_id, target, driver))
+
+    required_target_tier = expect.get("required_target_tier")
+    if isinstance(required_target_tier, str):
+        units_by_id = {
+            item["id"]: item
+            for item in manifest.get("execution_units", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        systems_by_id = {
+            item["id"]: item
+            for item in _systems(manifest)
+            if isinstance(item.get("id"), str)
+        }
+        selected_system_tiers = {
+            systems_by_id.get(
+                units_by_id.get(profile.get("execution_unit_id"), {}).get(
+                    "system_id"
+                ),
+                {},
+            ).get("target", {}).get("tier")
+            for profile in expected_profiles
+        }
+        target_context_is_bound = any(
+            required_evidence_ids
+            & set(target.get("evidence_refs", []))
+            for _, target, _ in selected_target_drivers
+        )
+        if (
+            not expected_profiles
+            or selected_system_tiers != {required_target_tier}
+            or (required_evidence_ids and not target_context_is_bound)
+        ):
+            diagnostics.append(
+                f"mobile case requires target tier {required_target_tier}"
+            )
+
+    cleanup_outcome = expect.get("required_cleanup_outcome")
+    if cleanup_outcome in {"successful", "failed"}:
+        expected = cleanup_outcome == "successful"
+        required_journey_ids = {
+            item
+            for item in expect.get("required_journey_ids", [])
+            if isinstance(item, str)
+        }
+        required_journey_ids.update(
+            checks_by_id[check_id].get("journey_id")
+            for check_id in expected_check_ids
+            if check_id in checks_by_id
+            and isinstance(
+                checks_by_id[check_id].get("journey_id"),
+                str,
+            )
+        )
+        cleanup_actions_by_id = {
+            item["id"]: item
+            for item in manifest.get("actions", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item.get("capability") == "mobile-cleanup"
+        }
+        selected_cleanup_action_ids = {
+            action_id
+            for profile in selected_execution_profiles
+            for action_id in profile.get("cleanup_action_refs", [])
+            if isinstance(action_id, str)
+        }
+        if not any(
+            isinstance(item, dict)
+            and item.get("cleanup_successful") is expected
+            and isinstance(item.get("cleanup_action_id"), str)
+            and item["cleanup_action_id"] in selected_cleanup_action_ids
+            and item["cleanup_action_id"] in cleanup_actions_by_id
+            and isinstance(
+                cleanup_actions_by_id[item["cleanup_action_id"]].get(
+                    "journey_ids"
+                ),
+                list,
+            )
+            and required_journey_ids <= set(
+                cleanup_actions_by_id[item["cleanup_action_id"]][
+                    "journey_ids"
+                ]
+            )
+            for item in evidence_records
+        ):
+            diagnostics.append(
+                "mobile cleanup success lacks explicit evidence"
+                if expected
+                else "mobile cleanup failure lacks explicit failed evidence"
+            )
+
+    required_roles = expect.get("required_artifact_roles", [])
+    required_sequence = expect.get("required_lifecycle_sequence")
+    upgrade_expected = bool(required_roles) or bool(required_sequence)
+    upgrade_scope_profiles = expected_profiles
+    if upgrade_expected and required_execution_ids:
+        required_execution_evidence = [
+            evidence_by_id[item]
+            for item in required_execution_ids
+            if item in evidence_by_id
+        ]
+        selected_profiles: list[dict[str, Any]] = []
+        selection_valid = bool(required_execution_evidence)
+        for item in required_execution_evidence:
+            selected_units = {
+                checks_by_id[check_id].get("execution_unit_id")
+                for check_id in item.get("check_ids", [])
+                if check_id in checks_by_id
+            }
+            environment = item.get("execution_environment")
+            target_reference = (
+                environment.get("target_reference")
+                if isinstance(environment, dict)
+                else None
+            )
+            artifact_reference = (
+                environment.get("application_build_ref")
+                if isinstance(environment, dict)
+                else None
+            )
+            matches = [
+                profile
+                for profile in expected_profiles
+                if profile.get("execution_unit_id") in selected_units
+                and profile.get("target_id") == target_reference
+                and artifact_reference in profile.get("artifact_ids", [])
+            ]
+            if len(matches) != 1:
+                selection_valid = False
+            else:
+                selected_profiles.append(matches[0])
+        selected_profile_ids = {
+            profile.get("id")
+            for profile in selected_profiles
+        }
+        if not selection_valid or len(selected_profile_ids) != 1:
+            diagnostics.append(
+                "mobile required lifecycle selection is ambiguous or unbound"
+            )
+            upgrade_scope_profiles = []
+        else:
+            upgrade_scope_profiles = [selected_profiles[0]]
+    upgrade_profiles = [
+        profile for profile in upgrade_scope_profiles
+        if profile.get("upgrade") is True
+    ]
+    if upgrade_expected and not upgrade_profiles:
+        diagnostics.append("mobile required lifecycle is not an upgrade")
+    selected_upgrade_artifacts = [
+        artifacts[artifact_id]
+        for profile in upgrade_profiles
+        for artifact_id in profile.get("artifact_ids", [])
+        if artifact_id in artifacts
+    ]
+    present_roles = {
+        item.get("role")
+        for item in selected_upgrade_artifacts
+        if isinstance(item.get("role"), str)
+    }
+    for role in required_roles:
+        if role not in present_roles:
+            diagnostics.append(f"missing mobile artifact role: {role}")
+
+    forbidden_roles = set(expect.get("forbidden_artifact_roles", []))
+    for artifact_id, artifact in artifacts.items():
+        if artifact.get("role") in forbidden_roles:
+            diagnostics.append(f"forbidden mobile artifact: {artifact_id}")
+
+    bootstrap = expect.get("required_driver_bootstrap")
+    if isinstance(bootstrap, dict):
+        authorizations_by_id = {
+            item["id"]: item
+            for item in manifest.get("authorizations", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if not any(
+            driver.get("kind") == bootstrap.get("kind")
+            and driver.get("bootstrap_status") == bootstrap.get("status")
+            and driver.get("authorization_ref") == bootstrap.get("authorization_ref")
+            and isinstance(
+                authorizations_by_id.get(driver.get("authorization_ref")),
+                dict,
+            )
+            and authorizations_by_id[driver["authorization_ref"]].get(
+                "status"
+            ) == "approved"
+            and authorizations_by_id[driver["authorization_ref"]].get(
+                "capability"
+            ) == "mobile-repository-bootstrap"
+            and authorizations_by_id[driver["authorization_ref"]].get(
+                "target_reference"
+            ) == target_id
+            for target_id, _, driver in selected_target_drivers
+        ):
+            diagnostics.append("mobile driver lacks required bootstrap authorization")
+
+    systems = _systems(manifest)
+    if expect.get("require_empty_credential_refs") is True and any(
+        system.get("target", {}).get("credential_refs")
+        for system in systems
+        if isinstance(system, dict) and isinstance(system.get("target"), dict)
+    ):
+        diagnostics.append("mobile case expected missing credential references")
+
+    commands = [
+        item.get("command", "")
+        for item in evidence_records
+        if isinstance(item, dict) and isinstance(item.get("command"), str)
+    ]
+    for term in expect.get("forbidden_command_terms", []):
+        if any(term.casefold() in command.casefold() for command in commands):
+            diagnostics.append(f"forbidden mobile command term: {term}")
+
+    if required_sequence:
+        selected_profile_units = {
+            profile.get("execution_unit_id")
+            for profile in upgrade_profiles
+        }
+        lifecycle_evidence = (
+            [
+                item
+                for item in expected_evidence
+                if set(item.get("check_ids", [])) == expected_check_ids
+            ]
+            if required_execution_ids
+            else [
+                item
+                for item in evidence_records
+                if any(
+                    checks_by_id.get(check_id, {}).get("execution_unit_id")
+                    in selected_profile_units
+                    for check_id in item.get("check_ids", [])
+                )
+            ]
+        )
+        if not any(
+            isinstance(item, dict)
+            and item.get("lifecycle") == required_sequence
+            for item in lifecycle_evidence
+        ):
+            diagnostics.append(
+                "mobile lifecycle evidence is missing the required sequence"
+            )
+
+    if expect.get("required_capability_target_evidence") is True and not any(
+        isinstance(item, dict)
+        and item.get("surface") == "mobile"
+        and any(
+            item.get("target_reference") == target_id
+            and item.get("adapter") in {driver.get("id"), driver.get("kind")}
+            for target_id, _, driver in selected_target_drivers
+        )
+        and isinstance(item.get("source_locations"), list)
+        and bool(item["source_locations"])
+        and item.get("read_only") is True
+        for item in evidence_records
+    ):
+        diagnostics.append(
+            "missing capability-unavailable mobile adapter and target evidence"
+        )
+
+    return diagnostics
+
+
+def _check_mobile_contract(
+    manifest: dict[str, Any],
+    expect: dict[str, Any],
+    surface: str,
+) -> list[str]:
+    diagnostics: list[str] = []
+    units = manifest.get("execution_units", [])
+    evidence = manifest.get("evidence", [])
+    actions = manifest.get("actions", [])
+    check_ids = _ids(manifest.get("checks"))
+    mobile_units = [
+        item for item in units
+        if isinstance(item, dict) and item.get("surface") == "mobile"
+    ]
+    if not mobile_units:
+        diagnostics.append("mobile case requires at least one mobile execution unit")
+        return diagnostics
+
+    extensions_by_id = {
+        item["id"]: item
+        for item in manifest.get("extensions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    bound_ids: set[str] = set()
+    for unit in mobile_units:
+        extension_id = unit.get("extension_id")
+        extension = extensions_by_id.get(extension_id)
+        if (
+            not isinstance(extension, dict)
+            or extension.get("namespace") != "e2e.mobile"
+            or extension.get("version") != "1.0"
+        ):
+            diagnostics.append(
+                f"execution_unit {unit.get('id')} does not reference "
+                "the e2e.mobile@1.0 extension"
+            )
+            continue
+        bound_ids.add(extension_id)
+    if len(bound_ids) > 1:
+        diagnostics.append(
+            "mobile execution units must share a single e2e.mobile extension"
+        )
+
+    bound_extensions = [
+        extensions_by_id[extension_id]
+        for extension_id in bound_ids
+        if extension_id in extensions_by_id
+    ]
+    if len(bound_extensions) == 1:
+        (
+            application_id,
+            drivers,
+            targets,
+            artifacts,
+            lifecycle_profiles,
+            duplicate_ids,
+        ) = _mobile_extension_records(bound_extensions[0])
+        if duplicate_ids:
+            diagnostics.extend(duplicate_ids)
+            return diagnostics
+        mobile_unit_ids = {
+            item["id"]
+            for item in mobile_units
+            if isinstance(item.get("id"), str)
+        }
+        diagnostics.extend(
+            _check_mobile_expected_state(
+                manifest,
+                expect,
+                drivers=drivers,
+                targets=targets,
+                artifacts=artifacts,
+                lifecycle_profiles=lifecycle_profiles,
+                mobile_unit_ids=mobile_unit_ids,
+            )
+        )
+
+        for artifact_id, artifact in artifacts.items():
+            if artifact.get("application_id") != application_id:
+                diagnostics.append(
+                    f"mobile artifact {artifact_id} does not reference "
+                    f"application {application_id}"
+                )
+
+        for target_id, target in targets.items():
+            driver_id = target.get("driver_id")
+            if driver_id not in drivers:
+                diagnostics.append(
+                    f"mobile target {target_id} references unknown driver {driver_id}"
+                )
+            for evidence_id in target.get("evidence_refs", []):
+                if evidence_id not in _ids(evidence):
+                    diagnostics.append(
+                        f"mobile target {target_id} references unknown "
+                        f"evidence {evidence_id}"
+                    )
+            if (
+                target.get("kind") in {"real", "remote"}
+                and target.get("provisioning_status") != "ready"
+            ):
+                diagnostics.append(f"mobile target {target_id} is not provisioned")
+
+        for profile in lifecycle_profiles:
+            profile_id = profile.get("id")
+            unit_id = profile.get("execution_unit_id")
+            target_id = profile.get("target_id")
+            if unit_id not in mobile_unit_ids:
+                diagnostics.append(
+                    f"mobile lifecycle {profile_id} references unknown "
+                    f"execution unit {unit_id}"
+                )
+            target = targets.get(target_id)
+            if target is None:
+                diagnostics.append(
+                    f"mobile lifecycle {profile_id} references unknown target {target_id}"
+                )
+
+            selected_artifacts = []
+            for artifact_id in profile.get("artifact_ids", []):
+                artifact = artifacts.get(artifact_id)
+                if artifact is None:
+                    diagnostics.append(
+                        f"mobile lifecycle {profile_id} references unknown "
+                        f"artifact {artifact_id}"
+                    )
+                else:
+                    selected_artifacts.append(artifact)
+
+            for field, label in (
+                ("setup_action_refs", "setup action"),
+                ("cleanup_action_refs", "cleanup action"),
+            ):
+                for action_id in profile.get(field, []):
+                    if action_id not in _ids(actions):
+                        diagnostics.append(
+                            f"mobile lifecycle {profile_id} references "
+                            f"unknown {label} {action_id}"
+                        )
+
+            if profile.get("upgrade") is True:
+                roles = [artifact.get("role") for artifact in selected_artifacts]
+                if roles.count("prior") != 1 or roles.count("candidate") != 1:
+                    diagnostics.append(
+                        f"mobile lifecycle {profile_id} upgrade requires "
+                        "one prior and one candidate artifact"
+                    )
+                elif roles != ["prior", "candidate"]:
+                    diagnostics.append(
+                        f"mobile lifecycle {profile_id} upgrade requires "
+                        "artifacts ordered prior then candidate"
+                    )
+
+            if (
+                profile.get("reset_policy") == "virtual-snapshot"
+                and (
+                    not isinstance(target, dict)
+                    or target.get("kind") not in {"simulator", "emulator"}
+                    or target.get("disposable") is not True
+                )
+            ):
+                diagnostics.append(
+                    f"mobile lifecycle {profile_id} virtual-snapshot "
+                    "requires a disposable virtual target"
+                )
+
+        units_by_id = {
+            unit.get("id"): unit
+            for unit in mobile_units
+            if isinstance(unit.get("id"), str)
+        }
+        systems_by_id = {
+            system.get("id"): system
+            for system in _systems(manifest)
+            if isinstance(system.get("id"), str)
+        }
+        for item in evidence:
+            if not _is_execution_evidence(item, check_ids, surface):
+                continue
+            environment = item["execution_environment"]
+            target_reference = environment.get("target_reference")
+            artifact_reference = environment.get("application_build_ref")
+            target = targets.get(target_reference)
+            artifact = artifacts.get(artifact_reference)
+
+            if target is None:
+                diagnostics.append(
+                    "mobile execution evidence references unknown target: "
+                    f"{target_reference}"
+                )
+                continue
+            if artifact is None:
+                diagnostics.append(
+                    "mobile execution evidence references unknown artifact: "
+                    f"{artifact_reference}"
+                )
+                continue
+
+            driver = drivers.get(target.get("driver_id"))
+            if (
+                not isinstance(driver, dict)
+                or environment.get("driver") != driver.get("kind")
+                or environment.get("driver_version") != driver.get("version")
+                or environment.get("platform") != target.get("platform")
+                or environment.get("os_version") != target.get("os_version")
+                or environment.get("target_kind") != target.get("kind")
+                or artifact.get("platform") != target.get("platform")
+            ):
+                diagnostics.append(
+                    f"mobile execution evidence does not match target {target_reference}"
+                )
+
+            selected_units = {
+                check.get("execution_unit_id")
+                for check in manifest.get("checks", [])
+                if isinstance(check, dict) and check.get("id") in item.get("check_ids", [])
+            }
+            for unit_id in selected_units:
+                matching_profiles = [
+                    profile
+                    for profile in lifecycle_profiles
+                    if profile.get("execution_unit_id") == unit_id
+                    and profile.get("target_id") == target_reference
+                    and artifact_reference in profile.get("artifact_ids", [])
+                ]
+                unit = units_by_id.get(unit_id)
+                system = (
+                    systems_by_id.get(unit.get("system_id"))
+                    if isinstance(unit, dict)
+                    else None
+                )
+                target_tier = (
+                    system.get("target", {}).get("tier")
+                    if isinstance(system, dict)
+                    and isinstance(system.get("target"), dict)
+                    else None
+                )
+                if (
+                    len(matching_profiles) != 1
+                    or environment.get("target_tier") != target_tier
+                ):
+                    diagnostics.append(
+                        f"mobile execution evidence is not bound to lifecycle for {unit_id}"
+                    )
+
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        environment = item.get("execution_environment")
+        if not isinstance(environment, dict):
+            continue
+        if environment.get("driver") not in MOBILE_DRIVERS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid driver: "
+                f"{environment.get('driver')}"
+            )
+        if environment.get("platform") not in MOBILE_PLATFORMS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid platform: "
+                f"{environment.get('platform')}"
+            )
+        if environment.get("target_kind") not in MOBILE_TARGET_KINDS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid target kind: "
+                f"{environment.get('target_kind')}"
+            )
+        origin = environment.get("evidence_origin")
+        if origin not in MOBILE_EVIDENCE_ORIGINS:
+            diagnostics.append(
+                f"mobile execution evidence has invalid evidence origin: {origin}"
+            )
+        elif origin == "fixture" and not expect.get("allow_fixture_evidence", False):
+            diagnostics.append(
+                "fixture evidence cannot satisfy live mobile acceptance"
+            )
+        if environment.get("target_tier") == "production":
+            if (
+                environment.get("external_effect_performed") is True
+                or environment.get("backend_mutation_performed") is True
+                or environment.get("permission_external_effect") is True
+            ):
+                diagnostics.append(
+                    "production external effects are not allowed "
+                    "in mobile verification"
+                )
+
+    required_check_ids = {
+        item
+        for item in expect.get("required_check_ids", [])
+        if isinstance(item, str)
+    }
+    expected_phase = expect.get("_phase_name", _run_value(manifest, "mode"))
+    final_revision = _run_value(manifest, "revision")
+    passing_mobile_evidence = []
+    for item in evidence:
+        if not _is_execution_evidence(item, check_ids, surface):
+            continue
+        consumed_revision = item.get("manifest_revision_consumed")
+        if (
+            item.get("phase") == expected_phase
+            and type(final_revision) is int
+            and type(consumed_revision) is int
+            and final_revision == consumed_revision + 1
+        ):
+            passing_mobile_evidence.append(item)
+    manifest_passed_check_ids = {
+        check.get("id")
+        for check in manifest.get("checks", [])
+        if isinstance(check, dict)
+        and isinstance(check.get("id"), str)
+        and check.get("status") == "passed"
+    }
+    passed_check_ids = {
+        check_id
+        for item in passing_mobile_evidence
+        for check_id in item.get("check_ids", [])
+        if check_id in manifest_passed_check_ids
+    }
+    for check_id in sorted(required_check_ids - passed_check_ids):
+        diagnostics.append(
+            f"required mobile check lacks passing execution evidence: {check_id}"
+        )
+
+    cleanup_actions = [
+        item for item in actions
+        if isinstance(item, dict)
+        and item.get("capability") == "mobile-cleanup"
+    ]
+    if _run_value(manifest, "status") == "verified" and not cleanup_actions:
+        diagnostics.append(
+            "cleanup incomplete: verified mobile run lacks mobile-cleanup action"
+        )
+    for action in cleanup_actions:
+        successful = any(
+            isinstance(item, dict)
+            and item.get("cleanup_action_id") == action.get("id")
+            and item.get("cleanup_successful") is True
+            for item in evidence
+        )
+        if not successful and _run_value(manifest, "status") == "verified":
+            diagnostics.append(
+                "cleanup incomplete: mobile-cleanup action lacks successful evidence"
+            )
+        if (
+            not successful
+            and _run_value(manifest, "status") == "blocked"
+            and not any(
+                isinstance(item, dict)
+                and item.get("cleanup_action_id") == action.get("id")
+                and item.get("cleanup_successful") is False
+                for item in evidence
+            )
+        ):
+            diagnostics.append(
+                "blocked cleanup outcome requires explicit failed cleanup evidence"
+            )
+    diagnostics.extend(_check_expected_classifications(manifest, expect))
+    diagnostics.extend(_check_expected_action_capabilities(manifest, expect))
+    diagnostics.extend(_check_forbidden_execution(evidence, expect))
+    return diagnostics
+
+
 def evaluate(
     case_path: str | Path,
     workspace: str | Path,
@@ -778,7 +1907,12 @@ def evaluate(
         except ValueError:
             pass
 
-    diagnostics = _check_files(root, ROOT / "evals" / "fixtures" / case["fixture"], expect)
+    diagnostics = _check_files(
+        root,
+        ROOT / "evals" / "fixtures" / case["fixture"],
+        expect,
+        evaluator_state,
+    )
     manifest_path = root / ".e2e" / "manifest.json"
     manifest, manifest_errors = _read_json(manifest_path, "manifest")
     expected_status = expect.get("manifest_status")
@@ -806,6 +1940,8 @@ def evaluate(
     diagnostics.extend(_check_status_evidence(manifest, expect, surface))
     if surface == "service":
         diagnostics.extend(_check_service_contract(manifest, expect, surface))
+    if surface == "mobile":
+        diagnostics.extend(_check_mobile_contract(manifest, expect, surface))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))

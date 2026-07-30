@@ -1,0 +1,18 @@
+{
+  "id": "mobile-verify-lifecycle",
+  "entry_skill": "e2e-mobile",
+  "surface": "mobile",
+  "mode": "verify",
+  "prompt": "Verify iOS simulator and Android emulator lifecycle with the mobile fixture shim. Record execution and cleanup evidence.",
+  "fixture": "mobile-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "allow_fixture_evidence": true,
+    "required_journey_ids": ["journey-mobile-lifecycle"],
+    "required_check_ids": ["check-ios-login", "check-android-login"],
+    "required_execution_evidence_ids": ["evidence-mobile-execution"],
+    "required_cleanup_outcome": "successful",
+    "mode": "verify"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

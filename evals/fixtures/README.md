@@ -2,6 +2,16 @@
 
 Each child directory is a minimal repository used by one or more behavioral cases. The host harness copies a fixture into an isolated temporary repository; agents never operate on the source fixture.
 
+## Mobile contract fixture
+
+The `mobile-contract` fixture uses metadata-only artifacts and deterministic
+driver/device shims (`test-support/mobile-driver.js`). It produces fixture-origin
+evidence for Appium and Maestro on iOS and Android.
+
+Fixture evidence proves workflow and evaluator behavior only. It cannot support
+a real simulator, emulator, real-device, remote-device, or application
+verification claim.
+
 ## Integrity baselines
 
 Every fixture contains a source-controlled `.fixture-baseline.json`. It maps every other fixture file to its SHA-256 digest. These files are intentional test inputs, not caches or disposable generated output.

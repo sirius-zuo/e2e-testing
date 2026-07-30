@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:e2e-testing:extension:mobile:1.0",
+  "title": "E2E Mobile Surface Extension",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["application", "drivers", "targets", "artifacts", "lifecycle_profiles"],
+  "properties": {
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "ios_bundle_id", "android_package_id", "source_refs", "config_refs", "build_command_refs", "entry_points", "framework_evidence"],
+      "properties": {
+        "id": {"type": "string"},
+        "ios_bundle_id": {"type": "string"},
+        "android_package_id": {"type": "string"},
+        "source_refs": {"type": "array", "items": {"type": "string"}},
+        "config_refs": {"type": "array", "items": {"type": "string"}},
+        "build_command_refs": {"type": "array", "items": {"type": "string"}},
+        "entry_points": {"type": "array", "items": {"type": "string", "enum": ["native", "embedded-webview"]}},
+        "framework_evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "drivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "version", "adapter_version", "config_refs", "command_ref", "capabilities", "host_platforms", "remote_endpoint_ref", "bootstrap_status", "authorization_ref"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string", "enum": ["appium", "maestro"]},
+          "version": {"type": "string"},
+          "adapter_version": {"type": "string"},
+          "config_refs": {"type": "array", "items": {"type": "string"}},
+          "command_ref": {"type": "string"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "host_platforms": {"type": "array", "items": {"type": "string"}},
+          "remote_endpoint_ref": {"type": "string"},
+          "bootstrap_status": {"type": "string", "enum": ["existing", "authorized", "authorization-required"]},
+          "authorization_ref": {"type": "string"}
+        }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "platform", "kind", "device_ref", "os_version", "driver_id", "provisioning_status", "disposable", "capabilities", "evidence_refs"],
+        "properties": {
+          "id": {"type": "string"},
+          "platform": {"type": "string", "enum": ["ios", "android"]},
+          "kind": {"type": "string", "enum": ["simulator", "emulator", "real", "remote"]},
+          "device_ref": {"type": "string"},
+          "os_version": {"type": "string"},
+          "driver_id": {"type": "string"},
+          "provisioning_status": {"type": "string", "enum": ["unknown", "ready", "unavailable"]},
+          "disposable": {"type": "boolean"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "evidence_refs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "platform", "role", "artifact_ref", "build_command_ref", "application_id", "build_ref", "provisioning_ref"],
+        "properties": {
+          "id": {"type": "string"},
+          "platform": {"type": "string", "enum": ["ios", "android"]},
+          "role": {"type": "string", "enum": ["candidate", "prior"]},
+          "artifact_ref": {"type": "string"},
+          "build_command_ref": {"type": "string"},
+          "application_id": {"type": "string"},
+          "build_ref": {"type": "string"},
+          "provisioning_ref": {"type": "string"}
+        }
+      }
+    },
+    "lifecycle_profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "execution_unit_id", "target_id", "artifact_ids", "install_policy", "launch_policy", "reset_policy", "background_foreground", "orientation", "deep_link_refs", "permission_profile_refs", "upgrade", "setup_action_refs", "cleanup_action_refs"],
+        "properties": {
+          "id": {"type": "string"},
+          "execution_unit_id": {"type": "string"},
+          "target_id": {"type": "string"},
+          "artifact_ids": {"type": "array", "items": {"type": "string"}},
+          "install_policy": {"type": "string", "enum": ["reuse", "fresh", "reinstall", "upgrade"]},
+          "launch_policy": {"type": "string", "enum": ["cold", "warm"]},
+          "reset_policy": {"type": "string", "enum": ["none", "app-scoped", "virtual-snapshot"]},
+          "background_foreground": {"type": "boolean"},
+          "orientation": {"type": "string", "enum": ["unspecified", "portrait", "landscape"]},
+          "deep_link_refs": {"type": "array", "items": {"type": "string"}},
+          "permission_profile_refs": {"type": "array", "items": {"type": "string"}},
+          "upgrade": {"type": "boolean"},
+          "setup_action_refs": {"type": "array", "items": {"type": "string"}},
+          "cleanup_action_refs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

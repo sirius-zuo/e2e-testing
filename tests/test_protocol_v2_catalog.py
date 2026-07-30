@@ -98,11 +98,18 @@ class ExtensionCatalogTests(unittest.TestCase):
         self.assertEqual(registry.resolve("e2e.web", "1.1")[0], "extension-incompatible")
         self.assertEqual(registry.resolve("e2e.service", "1.0")[0], "supported")
         self.assertEqual(registry.resolve("e2e.service", "1.1")[0], "extension-incompatible")
-        extension = {
+        self.assertEqual(registry.resolve("e2e.mobile", "1.0")[0], "supported")
+        self.assertEqual(registry.resolve("e2e.mobile", "1.1")[0], "extension-incompatible")
+        mobile = {
+            "namespace": "e2e.mobile", "version": "1.0",
+            "owner": "wrong-owner", "data": {},
+        }
+        self.assertIn("extension owner must be e2e-mobile", registry.validate(mobile))
+        web = {
             "namespace": "e2e.web", "version": "1.0", "owner": "wrong-owner",
             "data": {"driver": "playwright", "project": {}, "target": {}},
         }
-        self.assertIn("extension owner must be e2e-web", registry.validate(extension))
+        self.assertIn("extension owner must be e2e-web", registry.validate(web))
 
     def test_catalog_rejects_overlapping_ranges_and_unsafe_paths(self):
         base = {

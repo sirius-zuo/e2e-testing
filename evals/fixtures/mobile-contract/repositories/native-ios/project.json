@@ -1,0 +1,6 @@
+{
+  "kind": "native-ios",
+  "app_id": "app-native-ios",
+  "bundle_id": "com.example.nativeios",
+  "supported_boundary": "installed-app"
+}

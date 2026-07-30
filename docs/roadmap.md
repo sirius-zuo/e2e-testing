@@ -109,11 +109,25 @@ Add black-box E2E testing for installed iOS and Android applications.
 
 ### Deliverables
 
-- An independently installable mobile surface skill.
-- A typed mobile extension.
+- An independently installable `e2e-mobile` skill with Appium and Maestro driver adapters.
+- A typed `e2e.mobile@1.0` extension with application, drivers, targets, artifacts, and lifecycle profiles.
+- iOS simulator and Android emulator deterministic baselines.
+- Capability-gated real and remote target support.
+- Lifecycle evidence and required evaluator gates.
 - Repository-native mobile test generation and execution.
 - Deterministic fixtures for iOS and Android lifecycle behavior.
 - Required behavioral host evaluations.
+
+### Delivery decomposition
+
+V3 is one atomic `e2e-mobile` delivery with Appium and Maestro driver adapters,
+iOS and Android platform profiles, one typed `e2e.mobile@1.0` extension,
+deterministic iOS-simulator and Android-emulator behavior, capability-gated
+real or remote targets, lifecycle evidence, and required host evaluations.
+
+The V3 live-platform authorization matrix (Appium+iOS simulator, Appium+Android
+emulator, Maestro+iOS simulator, Maestro+Android emulator, and one Appium real
+or remote path) is tracked in [`evals/MOBILE_PLATFORM_ACCEPTANCE.md`](../evals/MOBILE_PLATFORM_ACCEPTANCE.md).
 
 ### Exclusions
 
