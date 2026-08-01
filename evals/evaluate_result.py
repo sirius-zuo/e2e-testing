@@ -20,6 +20,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from evals.desktop_contract import check_desktop_contract
+
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_PROTOCOL = ROOT / "skills" / "e2e-testing" / "scripts" / "e2e_protocol.py"
@@ -1942,6 +1944,8 @@ def evaluate(
         diagnostics.extend(_check_service_contract(manifest, expect, surface))
     if surface == "mobile":
         diagnostics.extend(_check_mobile_contract(manifest, expect, surface))
+    if surface == "desktop":
+        diagnostics.extend(check_desktop_contract(manifest, expect, surface))
     if expect.get("_checkpoint") and evaluator_state is None:
         diagnostics.append("missing evaluator state directory")
     diagnostics.extend(_check_continuity(evaluator_state, case, manifest, expect))
