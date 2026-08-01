@@ -1,0 +1,20 @@
+[
+  {
+    "id": "target-macos",
+    "platform": "macos",
+    "kind": "local",
+    "host_ref": "fixture-macos",
+    "os_version": "fixture-os",
+    "driver_id": "driver-mac2",
+    "fixture": true
+  },
+  {
+    "id": "target-windows",
+    "platform": "windows",
+    "kind": "local",
+    "host_ref": "fixture-windows",
+    "os_version": "fixture-os",
+    "driver_id": "driver-novawindows",
+    "fixture": true
+  }
+]

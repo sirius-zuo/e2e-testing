@@ -1,0 +1,11 @@
+{
+  "artifact_id": "artifact-native-macos-candidate",
+  "application_id": "app-native-macos",
+  "platform": "macos",
+  "role": "candidate",
+  "format": "app",
+  "version": "2.0",
+  "build": "200",
+  "sha256": "candidate-sha256-native-macos",
+  "fixture": true
+}

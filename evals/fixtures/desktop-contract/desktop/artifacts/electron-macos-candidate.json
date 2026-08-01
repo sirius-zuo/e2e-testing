@@ -1,0 +1,11 @@
+{
+  "artifact_id": "artifact-electron-macos-candidate",
+  "application_id": "app-electron-macos",
+  "platform": "macos",
+  "role": "candidate",
+  "format": "app",
+  "version": "2.0",
+  "build": "200",
+  "sha256": "candidate-sha256-electron-macos",
+  "fixture": true
+}

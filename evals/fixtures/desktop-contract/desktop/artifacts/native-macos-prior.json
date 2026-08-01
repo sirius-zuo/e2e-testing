@@ -1,0 +1,11 @@
+{
+  "artifact_id": "artifact-native-macos-prior",
+  "application_id": "app-native-macos",
+  "platform": "macos",
+  "role": "prior",
+  "format": "app",
+  "version": "1.0",
+  "build": "100",
+  "sha256": "prior-sha256-native-macos",
+  "fixture": true
+}

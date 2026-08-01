@@ -1,0 +1,11 @@
+{
+  "artifact_id": "artifact-native-windows-candidate",
+  "application_id": "app-native-windows",
+  "platform": "windows",
+  "role": "candidate",
+  "format": "msix",
+  "version": "2.0",
+  "build": "200",
+  "sha256": "candidate-sha256-native-windows",
+  "fixture": true
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "application_id": "app-native-macos",
+    "platform": "macos",
+    "kind": "native",
+    "macos_bundle_id": "com.example.desktop",
+    "windows_app_id": "",
+    "fixture": true
+  },
+  {
+    "application_id": "app-native-windows",
+    "platform": "windows",
+    "kind": "native",
+    "macos_bundle_id": "",
+    "windows_app_id": "Example",
+    "fixture": true
+  },
+  {
+    "application_id": "app-electron-macos",
+    "platform": "macos",
+    "kind": "electron",
+    "macos_bundle_id": "com.example.electron",
+    "windows_app_id": "",
+    "fixture": true
+  },
+  {
+    "application_id": "app-electron-windows",
+    "platform": "windows",
+    "kind": "electron",
+    "macos_bundle_id": "",
+    "windows_app_id": "ElectronApp",
+    "fixture": true
+  }
+]
