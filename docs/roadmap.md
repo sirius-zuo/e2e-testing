@@ -162,17 +162,22 @@ Add black-box E2E testing for installed desktop applications, including native a
 
 ### Deliverables
 
-- An independently installable desktop surface skill.
-- A typed desktop extension.
-- Repository-native native-desktop and Electron workflows.
-- Deterministic fixtures across supported operating systems.
+- An independently installable `e2e-desktop` skill with Appium Mac2 for native macOS, NovaWindows for native Windows, and WebdriverIO Electron for Electron.
+- A typed `e2e.desktop@1.0` extension with application, driver, target, session, artifact, lifecycle, and interaction-boundary data.
+- Dedicated-session rule: every live run executes in a dedicated OS user session or ephemeral VM.
+- macOS `.app`, `.dmg`, `.pkg` and Windows `.exe`, `.msi`, `.msix` first-class package formats.
+- Capability-gated remote desktop sessions and Linux recognition.
+- Deterministic fixtures across macOS and Windows native and Electron baselines.
 - Required behavioral host evaluations.
+- Live acceptance matrix in [`evals/DESKTOP_PLATFORM_ACCEPTANCE.md`](../evals/DESKTOP_PLATFORM_ACCEPTANCE.md).
 
 ### Exclusions
 
 - Browser-rendered sites, even when used from a desktop computer.
 - Cross-surface and cross-system orchestration.
 - Unbounded control of the user's general desktop session.
+- Linux as a deterministic V4 baseline.
+- Legacy WinAppDriver or Playwright Electron as greenfield defaults.
 
 ### Exit criteria
 

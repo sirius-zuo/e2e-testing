@@ -261,6 +261,36 @@ class ReadmeContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self._assert_exact_host_mobile_commands(mutated)
 
+    def test_readme_publishes_desktop_surface(self):
+        text = (ROOT / "README.md").read_text()
+        for required in ("e2e-desktop", "Appium Mac2", "NovaWindows", "WebdriverIO Electron", "dedicated"):
+            self.assertIn(required, text)
+
+    def test_desktop_acceptance_matrix_is_explicit(self):
+        text = (ROOT / "evals/DESKTOP_PLATFORM_ACCEPTANCE.md").read_text()
+        for required in (
+            "Appium Mac2 + native macOS", "NovaWindows + native Windows",
+            "WebdriverIO Electron + macOS", "WebdriverIO Electron + Windows",
+            "one remote macOS or Windows path", "explicit authorization",
+            "selected-check evidence", "cleanup evidence", "baseline restoration",
+        ):
+            self.assertIn(required, text)
+
+    def test_host_evaluation_guide_includes_desktop_cases(self):
+        text = (ROOT / "evals/HOST_EVALUATION.md").read_text()
+        for required in (
+            "desktop-generate-mac2",
+            "desktop-generate-novawindows",
+            "desktop-generate-electron",
+            "desktop-verify-lifecycle",
+            "desktop-production-refusal",
+            "desktop-session-refusal",
+            "e2e-desktop",
+            "per-run authorization",
+        ):
+            self.assertIn(required, text)
+        self.assertEqual(text.count("### Desktop cases"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

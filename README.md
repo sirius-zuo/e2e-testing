@@ -6,6 +6,7 @@ Portable Agent Skills for repository-native web, service, and installed mobile e
 - [`e2e-web`](skills/e2e-web/SKILL.md) implements Playwright-backed planning, generation, selected verification, failure classification, and bounded test repair behind a surface-oriented public boundary.
 - [`e2e-service`](skills/e2e-service/SKILL.md) implements HTTP, GraphQL, gRPC, WebSocket, queue, and stream boundary coverage with repository-native clients for service surfaces.
 - [`e2e-mobile`](skills/e2e-mobile/SKILL.md) implements black-box E2E coverage for installed iOS and Android applications through Appium and Maestro.
+- [`e2e-desktop`](skills/e2e-desktop/SKILL.md) implements black-box E2E coverage for installed native macOS (Appium Mac2), native Windows (NovaWindows), and Electron (WebdriverIO Electron) applications.
 
 ## Installation
 
@@ -20,7 +21,7 @@ Keep each skill directory intact so its bundled references and protocol utility 
 
 Ask `e2e-testing` to generate E2E coverage for the current project. The orchestrator identifies the surface (web, service, or installed mobile) and routes to the appropriate skill. Generation is the default and always ends `generated-unverified`; verification is a separate step that requires selected-check evidence and target/credential authorization before it may run.
 
-Invoke `e2e-web` directly for known web boundaries, `e2e-service` for known service boundaries, or `e2e-mobile` for known installed-app boundaries (iOS/Android native, React Native, Flutter, hybrid).
+Invoke `e2e-web` directly for known web boundaries, `e2e-service` for known service boundaries, `e2e-mobile` for known installed-app boundaries (iOS/Android native, React Native, Flutter, hybrid), or `e2e-desktop` for known installed desktop applications (native macOS, native Windows, Electron) in a dedicated OS session.
 
 ## Modes
 
@@ -43,6 +44,7 @@ Read each skill's safety and workflow references before using credentials or non
 - `skills/e2e-web/`: Playwright-backed execution skill — generation, selected verification, failure classification, and bounded repair.
 - `skills/e2e-service/`: service execution skill — HTTP, GraphQL, gRPC, WebSocket, queue, and stream boundary coverage.
 - `skills/e2e-mobile/`: mobile execution skill — Appium and Maestro coverage for installed iOS and Android applications.
+- `skills/e2e-desktop/`: desktop execution skill — Appium Mac2 for native macOS, NovaWindows for native Windows, WebdriverIO Electron for Electron.
 - `protocol/v2/`: canonical portable manifest schema and utility.
 - `evals/cases/`: behavioral case contracts.
 - [`evals/fixtures/`](evals/fixtures/README.md): deterministic fixture repositories and integrity baselines.
