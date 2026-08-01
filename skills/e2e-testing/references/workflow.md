@@ -125,6 +125,16 @@ When mobile boundaries are confirmed:
 - Never mutate an unsupported setup or migrate between drivers.
 - Route complete mobile work to `e2e-mobile` only.
 
+### Desktop boundary gate
+
+When desktop boundaries are confirmed:
+- Detect Appium Mac2, NovaWindows (Appium ecosystem), or WebdriverIO Electron
+  repository-native conventions.
+- Preserve capability-gated Playwright Electron and WinAppDriver setups without
+  migration. Route complete desktop work to `e2e-desktop` only.
+- Electron applications are desktop-owned; browser-rendered sites remain web-owned;
+  embedded browser views stay desktop-owned within the installed application.
+
 ### Database support
 
 - Use `database-setup`, `database-cleanup`, and `database-diagnostics` capabilities for execution

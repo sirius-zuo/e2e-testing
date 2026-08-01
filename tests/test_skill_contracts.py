@@ -72,7 +72,8 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("one primary surface", orchestrator_text)
         self.assertIn("`e2e-mobile`", orchestrator_text)
         self.assertIn("mobile", orchestrator_text)
-        self.assertNotIn("desktop", orchestrator_text)
+        self.assertIn("desktop", orchestrator_text)
+        self.assertIn("`e2e-desktop`", orchestrator_text)
         self.assertNotIn("You are a senior", orchestrator_text)
         self.assertNotIn("allowed-tools:", orchestrator_text)
         self.assert_relative_links_exist(ROOT / "skills/e2e-testing")
@@ -381,7 +382,7 @@ class SkillContractTests(unittest.TestCase):
         orchestrator_catalog = json.loads((orchestrator / "references/extensions/catalog.json").read_text())
         self.assertEqual(
             {entry["namespace"] for entry in orchestrator_catalog["extensions"]},
-            {"e2e.web", "e2e.service", "e2e.mobile"},
+            {"e2e.web", "e2e.service", "e2e.mobile", "e2e.desktop"},
         )
         service = ROOT / "skills" / "e2e-service"
         service_catalog = json.loads((service / "references/extensions/catalog.json").read_text())
