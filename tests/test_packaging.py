@@ -11,12 +11,14 @@ TARGETS = [
     ROOT / "skills/e2e-web",
     ROOT / "skills/e2e-service",
     ROOT / "skills/e2e-mobile",
+    ROOT / "skills/e2e-desktop",
 ]
 EXPECTED_NAMESPACES = {
-    "e2e-testing": {"e2e.web", "e2e.service", "e2e.mobile"},
+    "e2e-testing": {"e2e.web", "e2e.service", "e2e.mobile", "e2e.desktop"},
     "e2e-web": {"e2e.web"},
     "e2e-service": {"e2e.service"},
     "e2e-mobile": {"e2e.mobile"},
+    "e2e-desktop": {"e2e.desktop"},
 }
 
 
@@ -62,6 +64,15 @@ class PackagingTests(unittest.TestCase):
                 }]
                 self.assertIn(
                     "extension data missing required property: application",
+                    module.validate_manifest(manifest),
+                )
+            elif target.name == "e2e-desktop":
+                manifest["extensions"] = [{
+                    "id": "extension-desktop", "namespace": "e2e.desktop", "version": "1.0",
+                    "owner": "e2e-desktop", "data": {},
+                }]
+                self.assertIn(
+                    "extension data missing required property: applications",
                     module.validate_manifest(manifest),
                 )
             else:

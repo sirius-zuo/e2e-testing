@@ -12,10 +12,11 @@ STATIC_FILES = (
     (ROOT / "protocol/v2/extension_catalog.py", Path("scripts/extension_catalog.py")),
 )
 TARGETS = {
-    ROOT / "skills/e2e-testing": frozenset({"e2e.web", "e2e.service", "e2e.mobile"}),
+    ROOT / "skills/e2e-testing": frozenset({"e2e.web", "e2e.service", "e2e.mobile", "e2e.desktop"}),
     ROOT / "skills/e2e-web": frozenset({"e2e.web"}),
     ROOT / "skills/e2e-service": frozenset({"e2e.service"}),
     ROOT / "skills/e2e-mobile": frozenset({"e2e.mobile"}),
+    ROOT / "skills/e2e-desktop": frozenset({"e2e.desktop"}),
 }
 CATALOG_PATH = ROOT / "protocol/v2/extensions/catalog.json"
 

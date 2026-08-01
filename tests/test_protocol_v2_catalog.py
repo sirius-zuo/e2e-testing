@@ -100,6 +100,8 @@ class ExtensionCatalogTests(unittest.TestCase):
         self.assertEqual(registry.resolve("e2e.service", "1.1")[0], "extension-incompatible")
         self.assertEqual(registry.resolve("e2e.mobile", "1.0")[0], "supported")
         self.assertEqual(registry.resolve("e2e.mobile", "1.1")[0], "extension-incompatible")
+        self.assertEqual(registry.resolve("e2e.desktop", "1.0")[0], "supported")
+        self.assertEqual(registry.resolve("e2e.desktop", "1.1")[0], "extension-incompatible")
         mobile = {
             "namespace": "e2e.mobile", "version": "1.0",
             "owner": "wrong-owner", "data": {},
@@ -110,6 +112,11 @@ class ExtensionCatalogTests(unittest.TestCase):
             "data": {"driver": "playwright", "project": {}, "target": {}},
         }
         self.assertIn("extension owner must be e2e-web", registry.validate(web))
+        desktop = {
+            "namespace": "e2e.desktop", "version": "1.0",
+            "owner": "wrong-owner", "data": {},
+        }
+        self.assertIn("extension owner must be e2e-desktop", registry.validate(desktop))
 
     def test_catalog_rejects_overlapping_ranges_and_unsafe_paths(self):
         base = {
@@ -211,6 +218,26 @@ class ExtensionCatalogTests(unittest.TestCase):
             path = self._write_catalog(Path(tmp), catalog)
             with self.assertRaisesRegex(ExtensionCatalogError, "invalid catalog schema path"):
                 load_extension_registry(path)
+
+    def test_schema_compiler_expands_local_defs(self):
+        validator = compile_schema({
+            "$defs": {"name": {"type": "string", "minLength": 1}},
+            "type": "object", "required": ["name"],
+            "properties": {"name": {"$ref": "#/$defs/name"}},
+            "additionalProperties": False,
+        }, "draft2020-12-subset-1", "fixture")
+        self.assertEqual(validator({"name": "desktop"}), [])
+        self.assertIn("extension data.name is too short", validator({"name": ""}))
+
+    def test_schema_compiler_rejects_unsafe_or_recursive_refs(self):
+        for schema in (
+            {"$defs": {"x": {"type": "string"}}, "$ref": "file:///tmp/schema.json"},
+            {"$defs": {"x": {"$ref": "#/$defs/x"}}, "$ref": "#/$defs/x"},
+            {"$defs": {"x": {"type": "string"}}, "$ref": "#/$defs/x", "type": "string"},
+        ):
+            with self.subTest(schema=schema):
+                with self.assertRaises(ExtensionCatalogError):
+                    compile_schema(schema, "draft2020-12-subset-1", "fixture")
 
     @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows CI")
     def test_catalog_rejects_symlink_escape(self):

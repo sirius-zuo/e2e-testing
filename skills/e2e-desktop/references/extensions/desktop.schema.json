@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:e2e-testing:extension:desktop:1.0",
+  "title": "E2E Desktop Surface Extension",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["applications", "drivers", "targets", "sessions", "artifacts", "lifecycle_profiles", "interaction_boundaries"],
+  "properties": {
+    "applications": {"type": "array", "items": {"$ref": "#/$defs/application"}},
+    "drivers": {"type": "array", "items": {"$ref": "#/$defs/driver"}},
+    "targets": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+    "sessions": {"type": "array", "items": {"$ref": "#/$defs/session"}},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "lifecycle_profiles": {"type": "array", "items": {"$ref": "#/$defs/lifecycle"}},
+    "interaction_boundaries": {"type": "array", "items": {"$ref": "#/$defs/boundary"}}
+  },
+  "$defs": {
+    "stringArray": {"type": "array", "items": {"type": "string"}},
+    "relativeArray": {"type": "array", "items": {"type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}},
+    "application": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "macos_bundle_id", "windows_app_id", "source_refs", "config_refs", "build_command_refs", "executable_refs", "owned_process_refs", "entry_point_refs", "framework_evidence"],
+      "properties": {
+        "id": {"type": "string"}, "kind": {"enum": ["native", "electron"]},
+        "macos_bundle_id": {"type": "string"}, "windows_app_id": {"type": "string"},
+        "source_refs": {"$ref": "#/$defs/relativeArray"}, "config_refs": {"$ref": "#/$defs/relativeArray"},
+        "build_command_refs": {"$ref": "#/$defs/stringArray"}, "executable_refs": {"$ref": "#/$defs/stringArray"},
+        "owned_process_refs": {"$ref": "#/$defs/stringArray"}, "entry_point_refs": {"$ref": "#/$defs/stringArray"},
+        "framework_evidence": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "driver": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "version", "adapter_version", "backend_version", "config_refs", "command_ref", "capabilities", "host_platforms", "remote_endpoint_ref", "bootstrap_status", "authorization_ref", "legacy"],
+      "properties": {
+        "id": {"type": "string"}, "kind": {"enum": ["appium-mac2", "novawindows", "webdriverio-electron", "playwright-electron", "appium-windows-legacy"]},
+        "version": {"type": "string"}, "adapter_version": {"type": "string"}, "backend_version": {"type": "string"},
+        "config_refs": {"$ref": "#/$defs/relativeArray"}, "command_ref": {"type": "string"},
+        "capabilities": {"$ref": "#/$defs/stringArray"}, "host_platforms": {"type": "array", "items": {"enum": ["macos", "windows", "linux"]}},
+        "remote_endpoint_ref": {"type": "string"}, "bootstrap_status": {"enum": ["existing", "authorized", "authorization-required"]},
+        "authorization_ref": {"type": "string"}, "legacy": {"type": "boolean"}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "platform", "kind", "host_ref", "os_version", "driver_id", "provisioning_status", "disposable", "capabilities", "evidence_refs"],
+      "properties": {
+        "id": {"type": "string"}, "platform": {"enum": ["macos", "windows", "linux"]},
+        "kind": {"enum": ["local", "ephemeral", "remote"]}, "host_ref": {"type": "string"}, "os_version": {"type": "string"},
+        "driver_id": {"type": "string"}, "provisioning_status": {"enum": ["unknown", "ready", "unavailable"]},
+        "disposable": {"type": "boolean"}, "capabilities": {"$ref": "#/$defs/stringArray"}, "evidence_refs": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "session": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "target_id", "identity_ref", "kind", "interactive", "unlocked", "connected", "isolated", "expires_at", "application_allowlist", "os_interaction_allowlist", "baseline_ref", "restoration_ref"],
+      "properties": {
+        "id": {"type": "string"}, "target_id": {"type": "string"}, "identity_ref": {"type": "string"},
+        "kind": {"enum": ["dedicated-user", "ephemeral-vm"]}, "interactive": {"type": "boolean"}, "unlocked": {"type": "boolean"},
+        "connected": {"type": "boolean"}, "isolated": {"type": "boolean"}, "expires_at": {"type": "string"},
+        "application_allowlist": {"$ref": "#/$defs/stringArray"}, "os_interaction_allowlist": {"$ref": "#/$defs/stringArray"},
+        "baseline_ref": {"type": "string"}, "restoration_ref": {"type": "string"}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "application_id", "platform", "role", "format", "artifact_ref", "build_command_ref", "product_id", "version", "build", "sha256", "architecture", "trust_ref", "install_scope"],
+      "properties": {
+        "id": {"type": "string"}, "application_id": {"type": "string"}, "platform": {"enum": ["macos", "windows", "linux"]},
+        "role": {"enum": ["candidate", "prior"]}, "format": {"enum": ["app", "dmg", "pkg", "portable-exe", "installer-exe", "msi", "msix"]},
+        "artifact_ref": {"type": "string"}, "build_command_ref": {"type": "string"}, "product_id": {"type": "string"},
+        "version": {"type": "string"}, "build": {"type": "string"}, "sha256": {"type": "string"}, "architecture": {"type": "string"},
+        "trust_ref": {"type": "string"}, "install_scope": {"enum": ["portable", "user", "machine"]}
+      }
+    },
+    "boundary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "application_id", "window_refs", "owned_process_refs", "dialog_refs", "permission_refs", "notification_refs", "protocol_schemes", "filesystem_roots", "clipboard"],
+      "properties": {
+        "id": {"type": "string"}, "application_id": {"type": "string"}, "window_refs": {"$ref": "#/$defs/stringArray"},
+        "owned_process_refs": {"$ref": "#/$defs/stringArray"}, "dialog_refs": {"$ref": "#/$defs/stringArray"},
+        "permission_refs": {"$ref": "#/$defs/stringArray"}, "notification_refs": {"$ref": "#/$defs/stringArray"},
+        "protocol_schemes": {"$ref": "#/$defs/stringArray"}, "filesystem_roots": {"$ref": "#/$defs/relativeArray"},
+        "clipboard": {"enum": ["disabled", "bounded-read-write-restore"]}
+      }
+    },
+    "lifecycle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "execution_unit_id", "application_id", "driver_id", "target_id", "session_id", "artifact_ids", "interaction_boundary_id", "install_policy", "launch_policy", "activation", "minimize_restore", "reset_policy", "update", "setup_action_refs", "cleanup_action_refs", "authorization_refs"],
+      "properties": {
+        "id": {"type": "string"}, "execution_unit_id": {"type": "string"}, "application_id": {"type": "string"},
+        "driver_id": {"type": "string"}, "target_id": {"type": "string"}, "session_id": {"type": "string"},
+        "artifact_ids": {"$ref": "#/$defs/stringArray"}, "interaction_boundary_id": {"type": "string"},
+        "install_policy": {"enum": ["preinstalled", "portable", "fresh", "reinstall", "update"]},
+        "launch_policy": {"enum": ["cold", "warm"]}, "activation": {"type": "boolean"}, "minimize_restore": {"type": "boolean"},
+        "reset_policy": {"enum": ["none", "app-scoped", "ephemeral-snapshot"]}, "update": {"type": "boolean"},
+        "setup_action_refs": {"$ref": "#/$defs/stringArray"}, "cleanup_action_refs": {"$ref": "#/$defs/stringArray"},
+        "authorization_refs": {"$ref": "#/$defs/stringArray"}
+      }
+    }
+  }
+}
