@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
 from evals.desktop_contract import check_desktop_contract
+
+ROOT = Path(__file__).resolve().parents[1]
 from protocol.v2.e2e_protocol import new_manifest
 from tests.test_protocol_v2_extensions import desktop_data, desktop_extension
 
@@ -272,6 +276,51 @@ class DesktopEvaluatorContractTests(unittest.TestCase):
     def test_non_desktop_surface_ignored(self):
         manifest = desktop_manifest()
         self.assertEqual(check_desktop_contract(manifest, PASS_EXPECT, "web"), [])
+
+
+class DesktopCaseContractTests(unittest.TestCase):
+    REQUIRED_DESKTOP_CASES = {
+        "desktop-generate-mac2", "desktop-generate-novawindows",
+        "desktop-generate-electron", "desktop-verify-lifecycle", "desktop-update",
+        "desktop-production-refusal", "desktop-capability-unavailable",
+        "desktop-product-defect", "desktop-cleanup-failure",
+        "desktop-bootstrap-authorization", "desktop-bootstrap-authorized",
+        "desktop-missing-credentials", "desktop-missing-artifact",
+        "desktop-session-refusal", "desktop-mocked-os-refusal",
+    }
+
+    def test_desktop_case_inventory(self):
+        actual = {path.stem for path in (ROOT / "evals/cases").glob("desktop-*.json")}
+        self.assertEqual(actual, self.REQUIRED_DESKTOP_CASES)
+
+    def test_desktop_case_semantics(self):
+        cases_dir = ROOT / "evals/cases"
+        for case_path in cases_dir.glob("desktop-*.json"):
+            case = json.loads(case_path.read_text())
+            # Case ID must equal filename stem
+            self.assertEqual(case["id"], case_path.stem, f"{case_path.name}: id mismatch")
+            # Must use desktop fixture
+            self.assertEqual(case.get("fixture"), "desktop-contract", f"{case_path.name}: wrong fixture")
+            # Must have nonempty exact prompt
+            self.assertTrue(case.get("prompt"), f"{case_path.name}: missing prompt")
+            # Must declare expected mode
+            self.assertIn("mode", case, f"{case_path.name}: missing mode")
+            # Must not authorize paid/live execution
+            self.assertNotIn("live", json.dumps(case).lower(), f"{case_path.name}: authorizes live execution")
+            # Generation prompts must preserve repository-native conventions
+            if case.get("mode") == "generate":
+                prompt = case["prompt"].lower()
+                self.assertTrue(
+                    any(kw in prompt for kw in ("preserve", "authorized", "bootstrap", "repository-native")),
+                    f"{case_path.name}: generation must reference repository-native conventions",
+                )
+            # Refusal prompts must prohibit infrastructure mutation
+            if "refusal" in case["id"].lower() or "unavailable" in case["id"].lower():
+                prompt = case["prompt"].lower()
+                self.assertTrue(
+                    any(kw in prompt for kw in ("refuse", "do not", "prohibit")),
+                    f"{case_path.name}: refusal must prohibit mutation",
+                )
 
 
 if __name__ == "__main__":

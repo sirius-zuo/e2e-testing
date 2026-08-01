@@ -1,0 +1,18 @@
+{
+  "id": "desktop-verify-lifecycle",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "verify",
+  "prompt": "Verify only the selected native macOS/Appium Mac2, native Windows/NovaWindows, and Electron/WebdriverIO checks in the dedicated fixture sessions. Use the fixture shim, real_os_evidence=true fixture semantics, record current-revision execution and cleanup evidence, and restore each baseline envelope.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "allow_fixture_evidence": true,
+    "required_journey_ids": ["journey-desktop-lifecycle"],
+    "required_check_ids": ["check-native-macos", "check-native-windows", "check-electron-macos", "check-electron-windows"],
+    "required_execution_evidence_ids": ["evidence-desktop-execution"],
+    "required_cleanup_outcome": "successful",
+    "mode": "verify"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

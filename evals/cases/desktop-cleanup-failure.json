@@ -1,0 +1,13 @@
+{
+  "id": "desktop-cleanup-failure",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "verify",
+  "prompt": "Execute desktop verification where cleanup fails. Record execution evidence, blocked cleanup, and baseline restoration failure. Do not retry cleanup blindly.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "blocked",
+    "required_evidence_ids": ["cleanup-failure"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

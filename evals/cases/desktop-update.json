@@ -1,0 +1,18 @@
+{
+  "id": "desktop-update",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "verify",
+  "prompt": "Perform a desktop update lifecycle using distinct prior and candidate artifacts. Record ordered phases: target, session, baseline, prior-install, prior-state, candidate-update, launch, check, cleanup, restore. Require current-revision execution evidence and verified cleanup.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "allow_fixture_evidence": true,
+    "required_check_ids": ["check-desktop-update"],
+    "required_execution_evidence_ids": ["evidence-desktop-execution"],
+    "required_cleanup_outcome": "successful",
+    "mode": "verify",
+    "present_globs": ["desktop/artifacts/prior-*"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}
