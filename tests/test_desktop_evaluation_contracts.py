@@ -60,6 +60,7 @@ def desktop_manifest():
         "exit_code": 0, "duration_ms": 10, "phase": "verify",
         "manifest_revision_consumed": 0, "check_ids": ["check-desktop-launch"],
         "outcomes": [{"check_id": "check-desktop-launch", "status": "passed"}],
+        "lifecycle": ["target", "session", "baseline", "install", "launch", "check", "cleanup", "restore"],
         "execution_environment": environment, "real_os_evidence": True,
     }, {
         "id": "evidence-desktop-cleanup", "cleanup_action_id": "action-desktop-cleanup",
@@ -126,8 +127,8 @@ class DesktopEvaluatorContractTests(unittest.TestCase):
                 candidate["extensions"][0]["data"]["sessions"][0][field] = False
                 errors = check_desktop_contract(candidate, PASS_EXPECT, "desktop")
                 self.assertTrue(
-                    any("session" in item.lower() for item in errors),
-                    f"Expected session refusal for {field}=False",
+                    any("session" in item.lower() and "not execution-safe" in item.lower() for item in errors),
+                    f"Expected session refusal for {field}=False: {errors}",
                 )
 
     def test_expired_session_rejected(self):
@@ -262,6 +263,24 @@ class DesktopEvaluatorContractTests(unittest.TestCase):
         self.assertTrue(
             any("prior" in item.lower() for item in errors),
             f"Expected prior artifact error: {errors}",
+        )
+
+    def test_lifecycle_phase_ordering_validated(self):
+        manifest = desktop_manifest()
+        manifest["evidence"][1]["lifecycle"] = ["check", "launch", "baseline", "install"]
+        errors = check_desktop_contract(manifest, PASS_EXPECT, "desktop")
+        self.assertTrue(
+            any("phase" in item.lower() for item in errors),
+            f"Expected phase ordering error: {errors}",
+        )
+
+    def test_update_lifecycle_phase_ordering_validated(self):
+        manifest = desktop_manifest()
+        manifest["evidence"][1]["lifecycle"] = ["launch", "prior-install", "candidate-update", "baseline"]
+        errors = check_desktop_contract(manifest, PASS_EXPECT, "desktop")
+        self.assertTrue(
+            any("phase" in item.lower() for item in errors),
+            f"Expected update phase ordering error: {errors}",
         )
 
     def test_extension_version_mismatch_rejected(self):

@@ -407,6 +407,15 @@ def _check_evidence(manifest: dict[str, Any], expect: dict[str, Any], groups: di
         if consumed is None or consumed != expected_consumed:
             errors.append(f"evidence {evidence_id} has stale revision (expected {expected_consumed})")
 
+        # Validate lifecycle phase ordering
+        lifecycle_phases = ev.get("lifecycle")
+        if lifecycle_phases is not None:
+            # Detect update lifecycle by presence of update-specific phases
+            is_update = any(p in lifecycle_phases for p in ("prior-install", "prior-state", "candidate-update"))
+            expected_phases = UPDATE_PHASES if is_update else NORMAL_PHASES
+            phase_errors = _validate_phases(lifecycle_phases, expected_phases)
+            errors.extend(phase_errors)
+
         # Environment binding
         env = ev.get("execution_environment", {})
         for req_field in REQUIRED_ENVIRONMENT:
