@@ -1,0 +1,14 @@
+{
+  "id": "desktop-product-defect",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "verify",
+  "prompt": "Execute desktop verification where the application exhibits a product defect. Record failed selected-check execution evidence, link a product-defect classification, and create a handoff. Do not repair application code.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "handoff-required",
+    "required_classifications": ["product-defect"],
+    "required_action_capabilities": ["fix-product-defect"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

@@ -303,6 +303,117 @@ class ProtocolV2ExtensionTests(unittest.TestCase):
         self.assertTrue(any("stream.role is not an allowed value" in e for e in errors))
 
 
+def desktop_data():
+    return {
+        "applications": [{
+            "id": "app-native-macos", "kind": "native",
+            "macos_bundle_id": "com.example.desktop", "windows_app_id": "",
+            "source_refs": ["desktop/applications.json"],
+            "config_refs": ["appium.config.js"],
+            "build_command_refs": ["build:desktop"],
+            "executable_refs": ["Example.app"],
+            "owned_process_refs": ["Example"],
+            "entry_point_refs": ["main-window"],
+            "framework_evidence": ["swiftui"],
+        }],
+        "drivers": [{
+            "id": "driver-mac2", "kind": "appium-mac2",
+            "version": "2.0", "adapter_version": "3.0",
+            "backend_version": "xctest", "config_refs": ["appium.config.js"],
+            "command_ref": "npm run e2e:desktop:macos",
+            "capabilities": ["launch", "window", "accessibility", "terminate"],
+            "host_platforms": ["macos"], "remote_endpoint_ref": "",
+            "bootstrap_status": "existing", "authorization_ref": "",
+            "legacy": False,
+        }],
+        "targets": [{
+            "id": "target-macos", "platform": "macos", "kind": "local",
+            "host_ref": "fixture-macos", "os_version": "fixture-os",
+            "driver_id": "driver-mac2", "provisioning_status": "ready",
+            "disposable": False,
+            "capabilities": ["launch", "window", "accessibility", "terminate"],
+            "evidence_refs": ["evidence-target"],
+        }],
+        "sessions": [{
+            "id": "session-macos", "target_id": "target-macos",
+            "identity_ref": "fixture-dedicated-user", "kind": "dedicated-user",
+            "interactive": True, "unlocked": True, "connected": True,
+            "isolated": True, "expires_at": "2026-08-01T01:00:00Z",
+            "application_allowlist": ["app-native-macos"],
+            "os_interaction_allowlist": ["boundary-macos"],
+            "baseline_ref": "baseline-macos", "restoration_ref": "restore-macos",
+        }],
+        "artifacts": [{
+            "id": "artifact-native-macos", "application_id": "app-native-macos",
+            "platform": "macos", "role": "candidate", "format": "app",
+            "artifact_ref": "desktop/artifacts/native-macos-candidate.json",
+            "build_command_ref": "build:desktop", "product_id": "com.example.desktop",
+            "version": "2.0", "build": "200", "sha256": "fixture-sha256",
+            "architecture": "arm64", "trust_ref": "notarized-fixture",
+            "install_scope": "user",
+        }],
+        "interaction_boundaries": [{
+            "id": "boundary-macos", "application_id": "app-native-macos",
+            "window_refs": ["main-window"], "owned_process_refs": ["Example"],
+            "dialog_refs": ["open-file"], "permission_refs": ["notifications"],
+            "notification_refs": ["example-notification"],
+            "protocol_schemes": ["example"],
+            "filesystem_roots": ["fixture-data"], "clipboard": "disabled",
+        }],
+        "lifecycle_profiles": [{
+            "id": "lifecycle-macos", "execution_unit_id": "unit-desktop",
+            "application_id": "app-native-macos", "driver_id": "driver-mac2",
+            "target_id": "target-macos", "session_id": "session-macos",
+            "artifact_ids": ["artifact-native-macos"],
+            "interaction_boundary_id": "boundary-macos",
+            "install_policy": "fresh", "launch_policy": "cold",
+            "activation": True, "minimize_restore": True,
+            "reset_policy": "app-scoped", "update": False,
+            "setup_action_refs": [], "cleanup_action_refs": ["action-desktop-cleanup"],
+            "authorization_refs": ["authorization-desktop"],
+        }],
+    }
+
+
+def desktop_extension(data=None):
+    return {
+        "id": "extension-desktop", "namespace": "e2e.desktop",
+        "version": "1.0", "owner": "e2e-desktop",
+        "data": data or desktop_data(),
+    }
+
+
+class ProtocolV2DesktopExtensionTests(unittest.TestCase):
+    def test_desktop_extension_validates_complete_data(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-08-01T00:00:00Z")
+        manifest["extensions"] = [desktop_extension()]
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_desktop_extension_rejects_unknown_driver(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-08-01T00:00:00Z")
+        data = desktop_data()
+        data["drivers"][0]["kind"] = "winappdriver"
+        manifest["extensions"] = [desktop_extension(data)]
+        self.assertIn("extension data.drivers[0].kind is not an allowed value", validate_manifest(manifest))
+
+    def test_desktop_extension_rejects_general_session(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-08-01T00:00:00Z")
+        data = desktop_data()
+        data["sessions"][0]["kind"] = "general-user"
+        manifest["extensions"] = [desktop_extension(data)]
+        self.assertIn("extension data.sessions[0].kind is not an allowed value", validate_manifest(manifest))
+
+    def test_desktop_extension_rejects_machine_root_filesystem(self):
+        manifest = new_manifest("/workspace/app", timestamp="2026-08-01T00:00:00Z")
+        data = desktop_data()
+        data["interaction_boundaries"][0]["filesystem_roots"] = ["/"]
+        manifest["extensions"] = [desktop_extension(data)]
+        self.assertIn(
+            "extension data.interaction_boundaries[0].filesystem_roots[0] does not match pattern",
+            validate_manifest(manifest),
+        )
+
+
 def mobile_data():
     return {
         "application": {

@@ -14,6 +14,7 @@ description: Plan, create, maintain, or coordinate end-to-end suites, journey co
    - confirmed web only → `e2e-web`
    - confirmed service only → `e2e-service`
    - confirmed installed mobile application only → `e2e-mobile`
+   - confirmed installed desktop application only → `e2e-desktop`
    - more than one requested surface → `needs-clarification`
    - no confirmed boundary → `needs-clarification`.
 5. If an unsupported browser driver exists for web, preserve test infrastructure and record a
@@ -38,6 +39,11 @@ description: Plan, create, maintain, or coordinate end-to-end suites, journey co
   Flutter, or hybrid), route to `e2e-mobile`. embedded WebView
   inside the installed application remain mobile-owned; standalone mobile-browser
   websites route to `e2e-web`.
+- If confirmed installed desktop application (native macOS, native Windows, or
+  Electron), route to `e2e-desktop`. Electron applications are desktop-owned;
+  browser-rendered sites remain web-owned; embedded browser views remain
+  desktop-owned while the journey stays inside the installed application;
+  cross-surface ambiguity becomes `needs-clarification`.
 - If both web and service are requested, return `needs-clarification`.
 - If more than one surface is requested, return `needs-clarification`.
 - Otherwise route complete work to the confirmed capability only.

@@ -1,0 +1,10 @@
+{
+  "name": "desktop-contract-fixture",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/fixture-contract.test.js",
+    "e2e:desktop:macos": "node test-support/desktop-driver.js --driver appium-mac2 --platform macos --app-kind native --scenario pass",
+    "e2e:desktop:windows": "node test-support/desktop-driver.js --driver novawindows --platform windows --app-kind native --scenario pass",
+    "e2e:desktop:electron": "node test-support/desktop-driver.js --driver webdriverio-electron --platform macos --app-kind electron --scenario pass"
+  }
+}

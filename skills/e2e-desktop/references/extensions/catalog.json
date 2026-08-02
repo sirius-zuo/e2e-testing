@@ -1,0 +1,17 @@
+{
+  "catalog_version": "1.0",
+  "extensions": [
+    {
+      "namespace": "e2e.desktop",
+      "owner": "e2e-desktop",
+      "versions": [
+        {
+          "minimum": "1.0",
+          "maximum": "1.0",
+          "dialect": "draft2020-12-subset-1",
+          "schema": "desktop.schema.json"
+        }
+      ]
+    }
+  ]
+}

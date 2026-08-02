@@ -1,0 +1,11 @@
+{
+  "artifact_id": "artifact-native-windows-prior",
+  "application_id": "app-native-windows",
+  "platform": "windows",
+  "role": "prior",
+  "format": "msix",
+  "version": "1.0",
+  "build": "100",
+  "sha256": "prior-sha256-native-windows",
+  "fixture": true
+}

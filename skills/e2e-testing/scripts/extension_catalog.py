@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -20,7 +21,7 @@ JSON_TYPES = {"null", "boolean", "integer", "number", "string", "array", "object
 SCHEMA_KEYS = {
     "$schema", "$id", "title", "description", "type", "required", "properties",
     "additionalProperties", "enum", "const", "pattern", "minimum", "maximum",
-    "minLength", "maxLength", "items", "minItems", "maxItems",
+    "minLength", "maxLength", "items", "minItems", "maxItems", "$defs",
 }
 
 
@@ -173,14 +174,55 @@ def _validate_value(schema: dict[str, Any], value: Any, path: str, errors: list[
             errors.append(f"{path} is above maximum")
 
 
+LOCAL_REF = re.compile("#/\\$defs/([A-Za-z][A-Za-z0-9_-]*)\\Z")
+
+
+def _expand_local_refs(schema: Any, source: str) -> dict[str, Any]:
+    if not isinstance(schema, dict):
+        raise ExtensionCatalogError(f"invalid schema object: {source}")
+    definitions = schema.get("$defs", {})
+    if not isinstance(definitions, dict) or not all(isinstance(name, str) for name in definitions):
+        raise ExtensionCatalogError(f"schema $defs is invalid: {source}")
+
+    def expand(node: Any, trail: tuple[str, ...]) -> Any:
+        if not isinstance(node, dict):
+            return copy.deepcopy(node)
+        if "$ref" in node:
+            if set(node) != {"$ref"} or not isinstance(node["$ref"], str):
+                raise ExtensionCatalogError(f"schema $ref must be the only keyword: {source}")
+            match = LOCAL_REF.fullmatch(node["$ref"])
+            if match is None or match.group(1) not in definitions:
+                raise ExtensionCatalogError(f"unsupported schema reference: {node['$ref']}")
+            name = match.group(1)
+            if name in trail:
+                raise ExtensionCatalogError(f"recursive schema reference: {name}")
+            return expand(definitions[name], trail + (name,))
+        result = {}
+        for key, value in node.items():
+            if key == "$defs":
+                continue
+            if key == "properties":
+                if not isinstance(value, dict):
+                    raise ExtensionCatalogError(f"schema properties is invalid: {source}")
+                result[key] = {name: expand(child, trail) for name, child in value.items()}
+            elif key == "items":
+                result[key] = expand(value, trail)
+            else:
+                result[key] = copy.deepcopy(value)
+        return result
+
+    return expand(schema, ())
+
+
 def compile_schema(schema: Any, dialect: str, source: str) -> ExtensionValidator:
     if dialect != SUPPORTED_DIALECT:
         raise ExtensionCatalogError(f"unsupported runtime schema dialect: {dialect}")
-    _validate_schema_node(schema, source)
+    expanded = _expand_local_refs(schema, source)
+    _validate_schema_node(expanded, source)
 
     def validate(value: Any) -> list[str]:
         errors: list[str] = []
-        _validate_value(schema, value, "extension data", errors)
+        _validate_value(expanded, value, "extension data", errors)
         return errors
 
     return validate

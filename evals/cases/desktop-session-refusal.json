@@ -1,0 +1,12 @@
+{
+  "id": "desktop-session-refusal",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "verify",
+  "prompt": "Attempt desktop execution in a general-purpose, locked, or unbounded session. Refuse execution and record capability-unavailable. Do not proceed with unverified session isolation.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "capability-unavailable"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

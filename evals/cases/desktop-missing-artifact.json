@@ -1,0 +1,12 @@
+{
+  "id": "desktop-missing-artifact",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "verify",
+  "prompt": "Attempt desktop verification with a missing artifact. Refuse execution and record capability-unavailable. Do not guess or fabricate artifacts.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "capability-unavailable"
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

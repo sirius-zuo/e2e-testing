@@ -1,0 +1,11 @@
+{
+  "artifact_id": "artifact-electron-windows-candidate",
+  "application_id": "app-electron-windows",
+  "platform": "windows",
+  "role": "candidate",
+  "format": "msix",
+  "version": "2.0",
+  "build": "200",
+  "sha256": "candidate-sha256-electron-windows",
+  "fixture": true
+}

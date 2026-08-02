@@ -1,0 +1,13 @@
+{
+  "id": "desktop-mocked-os-refusal",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "verify",
+  "prompt": "Attempt desktop verification using mocked Electron native APIs. Refuse mocked OS behavior as E2E evidence and record inconclusive. Require real OS behavior in the dedicated session.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "capability-unavailable",
+    "required_classifications": ["inconclusive"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

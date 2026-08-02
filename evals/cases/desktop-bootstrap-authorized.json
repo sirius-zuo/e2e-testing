@@ -1,0 +1,17 @@
+{
+  "id": "desktop-bootstrap-authorized",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "generate",
+  "prompt": "Perform authorized desktop test bootstrap. May only touch desktop test dependencies, lockfiles, tests, fixtures, configuration, and dedicated test support. Record the authorized changes and end with generated-unverified.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "allow_fixture_evidence": true,
+    "required_check_ids": [],
+    "required_cleanup_outcome": "successful",
+    "mode": "generate",
+    "present_globs": ["e2e-desktop-tests/**"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

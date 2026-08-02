@@ -1,0 +1,19 @@
+{
+  "id": "desktop-generate-electron",
+  "entry_skill": "e2e-desktop",
+  "surface": "desktop",
+  "mode": "generate",
+  "prompt": "Generate repository-native desktop tests for Electron with WebdriverIO Electron in the dedicated fixture session. Preserve existing capability-gated Playwright Electron setups; authorized bootstrap may only touch desktop test dependencies, lockfiles, tests, fixtures, configuration, and dedicated test support. End with generated-unverified.",
+  "fixture": "desktop-contract",
+  "expect": {
+    "manifest_status": "verified",
+    "allow_fixture_evidence": true,
+    "required_check_ids": ["check-desktop-launch"],
+    "required_execution_evidence_ids": [],
+    "required_cleanup_outcome": "successful",
+    "mode": "generate",
+    "present_globs": ["e2e-desktop-tests/**"],
+    "changed_globs": ["package.json", "wdio.conf.js"]
+  },
+  "autonomy": {"mode": "explicit", "auto_repair": false}
+}

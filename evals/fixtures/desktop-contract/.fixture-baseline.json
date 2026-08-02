@@ -1,0 +1,15 @@
+{
+  "appium.config.js": "d94a2844178830a8911cc0dfe4b8f86a1ea83276fe5d4727d2c111326ab459fc",
+  "desktop/applications.json": "10c1e76c578d5bb843706c81790480a015c6761a5f54ef99740be9937b56fef4",
+  "desktop/artifacts/electron-macos-candidate.json": "3658ea2449f09a7b5ae7b8983e4f99e4a292512c460355df27a07c262a126e0f",
+  "desktop/artifacts/electron-windows-candidate.json": "6d7e6c188cd49fdfcc48761fd17fbce07410b67dcf7388fbc0ce01e9d390cf6d",
+  "desktop/artifacts/native-macos-candidate.json": "68ec462f834f243809fd4e0199c14b06198c4e41e5cd22b732717ff9abb05fbc",
+  "desktop/artifacts/native-macos-prior.json": "e12b55925fe0beb597e5f71cd29945684c29a96f9d502bb5db142b624c985796",
+  "desktop/artifacts/native-windows-candidate.json": "47aeca6037c99d914a2f24f44e6b6b613552299f69c63a30fcda2a69626dd6f4",
+  "desktop/artifacts/native-windows-prior.json": "168efdd585b3aa391548e1675bc5c5988148a59774541c1c3a4824501c4def3e",
+  "desktop/targets.json": "72fd204fd7536fc2680ec99465d45ad2c83eb132679bd22332dca127a59a256d",
+  "package.json": "87bf03583cf3224b231daef10e897d793ba3fda4fba6f36b0ab0f39f6fa29b85",
+  "test-support/desktop-driver.js": "25fb10f9feed2831b638d7f21c4af6bdcb19509ef68a84e352ba7ce7ad9a58af",
+  "tests/fixture-contract.test.js": "70cfbed3e84c39e81920bb9ecd4cb09721295c16e6e74741c92498520c6a2026",
+  "wdio.conf.js": "ef0cf68d9e6cac62fb084387613a56ade92938d7452fe5ebc313b89e3ced6f88"
+}

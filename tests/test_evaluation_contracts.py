@@ -154,7 +154,7 @@ def _repair_attempt() -> dict:
 class FixtureContractTests(unittest.TestCase):
     def test_cases_have_required_fields_and_existing_fixtures(self):
         case_paths = sorted(CASES.glob("*.json"))
-        self.assertEqual(len(case_paths), 29)
+        self.assertEqual(len(case_paths), 44)
         original_cases = {
             "greenfield-source", "live-assisted-generation", "existing-playwright",
             "unsupported-cypress", "conflicting-evidence", "verify-pass",
@@ -173,16 +173,25 @@ class FixtureContractTests(unittest.TestCase):
             "mobile-bootstrap-authorization", "mobile-bootstrap-authorized",
             "mobile-missing-credentials", "mobile-missing-artifact",
         }
+        desktop_cases = {
+            "desktop-generate-mac2", "desktop-generate-novawindows",
+            "desktop-generate-electron", "desktop-verify-lifecycle", "desktop-update",
+            "desktop-production-refusal", "desktop-capability-unavailable",
+            "desktop-product-defect", "desktop-cleanup-failure",
+            "desktop-bootstrap-authorization", "desktop-bootstrap-authorized",
+            "desktop-missing-credentials", "desktop-missing-artifact",
+            "desktop-session-refusal", "desktop-mocked-os-refusal",
+        }
         self.assertEqual(
             {path.stem for path in case_paths},
-            original_cases | service_cases | mobile_cases,
+            original_cases | service_cases | mobile_cases | desktop_cases,
         )
         for path in case_paths:
             with self.subTest(case=path.stem):
                 case = json.loads(path.read_text())
                 self.assertTrue(REQUIRED_CASE_FIELDS <= set(case))
                 self.assertTrue((FIXTURES / case["fixture"]).is_dir())
-                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service", "e2e-mobile"})
+                self.assertIn(case["entry_skill"], {"e2e-testing", "e2e-service", "e2e-mobile", "e2e-desktop"})
                 self.assertNotIn("e2e-web-playwright", json.dumps(case))
 
     def test_verified_case_expectations_name_the_execution_evidence_to_bind(self):
@@ -906,7 +915,7 @@ class HostHarnessTests(unittest.TestCase):
             with self.subTest(host=host):
                 self._run(host, keep_results=True)
                 workspace = next((self.results / host / "greenfield-source").glob("*/workspace"))
-                for skill in ("e2e-testing", "e2e-web", "e2e-service", "e2e-mobile"):
+                for skill in ("e2e-testing", "e2e-web", "e2e-service", "e2e-mobile", "e2e-desktop"):
                     self.assertTrue((workspace / skill_root / skill / "SKILL.md").is_file())
                 self.assertFalse((workspace / skill_root / "e2e-web-playwright").exists())
 
